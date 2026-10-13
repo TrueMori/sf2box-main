@@ -97,6 +97,7 @@ function buildPresetOptions(isNoise: boolean, idSet: string): HTMLSelectElement 
         menu.appendChild(option({ value: InstrumentType.pickedString }, EditorConfig.valueToPreset(InstrumentType.pickedString)!.name));
         menu.appendChild(option({ value: InstrumentType.spectrum }, EditorConfig.valueToPreset(InstrumentType.spectrum)!.name));
         menu.appendChild(option({ value: InstrumentType.noise }, EditorConfig.valueToPreset(InstrumentType.noise)!.name));
+        menu.appendChild(option({ value: InstrumentType.soundfont }, EditorConfig.instrumentToPreset(InstrumentType.soundfont)!.name));
     }
 
     // TODO - When you port over the Dogebox2 import/export buttons be sure to uncomment these

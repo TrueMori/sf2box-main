@@ -243,7 +243,7 @@ const enum SongTagCode {
 	harmonics           = CharCode.H, // added in BeepBox URL version 7
 	stringSustain       = CharCode.I, // added in BeepBox URL version 9
 //	                    = CharCode.J,
-//	                    = CharCode.K,
+    soundfont           = CharCode.K, // added in sf2box
 	pan                 = CharCode.L, // added between 8 and 9, DEPRECATED
 	customChipWave      = CharCode.M, // added in JummBox URL version 1(?) for customChipWave
 	songTitle           = CharCode.N, // added in JummBox URL version 1(?) for songTitle
@@ -1678,6 +1678,9 @@ export class Instrument {
 				this.pulseWidth = Config.pulseWidthRange - 1;
                 this.decimalOffset = 0;
 				break;
+            case InstrumentType.soundfont:
+                this.chord = Config.chords.dictionary["simultaneous"].index;
+                break;
             default:
                 throw new Error("Unrecognized instrument type: " + type);
         }
@@ -2045,6 +2048,8 @@ export class Instrument {
                 instrumentObject["modSettings"][mod] = this.modulators[mod];
                 instrumentObject["modFilterTypes"][mod] = this.modFilterTypes[mod];
             }
+        } else if (this.type == InstrumentType.soundfont) {
+            // Nothing to save yet.
         } else {
             throw new Error("Unrecognized instrument type");
         }
@@ -2580,6 +2585,8 @@ export class Instrument {
                     this.modFilterTypes[mod] = instrumentObject["modFilterTypes"][mod];
                 }
             }
+        } else if (this.type == InstrumentType.soundfont) {
+            // Nothing to load yet.
         }
 
         if (this.type != InstrumentType.mod) {
@@ -3454,6 +3461,9 @@ export class Song {
                     buffer.push(SongTagCode.stringSustain, base64IntToCharCode[instrument.stringSustain | (instrument.stringSustainType << 5)]);
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
+                } else if (instrument.type == InstrumentType.soundfont) {
+                    buffer.push(SongTagCode.soundfont);
+                    // Nothing to save yet.
                 } else {
                     throw new Error("Unknown instrument type.");
                 }
@@ -4491,6 +4501,9 @@ export class Song {
                     instrument.decimalOffset = clamp(0, 99 + 1, (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) + base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                 }
 
+            } break;
+            case SongTagCode.soundfont: {
+                // Nothing to load yet.
             } break;
             case SongTagCode.stringSustain: {
                 const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
@@ -10431,6 +10444,8 @@ export class Synth {
             expressionReferencePitch = 0;
             pitchDamping = 1.0;
             basePitch = 0;
+        } else if (instrument.type == InstrumentType.soundfont) {
+            baseExpression = Config.soundfontBaseExpression;
         } else {
             throw new Error("Unknown instrument type in computeTone.");
         }
@@ -11439,7 +11454,9 @@ export class Synth {
 				Synth.fm6SynthFunctionCache[fingerprint] = new Function("Config", "Synth", wrappedFm6Synth)(Config, Synth);
             }
             return Synth.fm6SynthFunctionCache[fingerprint];
-        }else{
+        } else if (instrument.type == InstrumentType.soundfont) {
+            return Synth.soundfontSynth;
+        } else {
             throw new Error("Unrecognized instrument type: " + instrument.type);
         }
     }
@@ -11780,6 +11797,10 @@ export class Synth {
             tone.initialNoteFilterInput1 = initialFilterInput1;
             tone.initialNoteFilterInput2 = initialFilterInput2;
         }
+    private static soundfontSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
+        //Nothing to synthesize yet.
+    }
+
     private static chipSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
         const aliases: boolean = (effectsIncludeDistortion(instrumentState.effects) && instrumentState.aliases);
         const data: Float32Array = synth.tempMonoInstrumentSampleBuffer!;
