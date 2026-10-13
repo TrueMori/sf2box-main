@@ -55,6 +55,8 @@ import { SampleLoadingStatusPrompt } from "./SampleLoadingStatusPrompt";
 import { AddSamplesPrompt } from "./AddSamplesPrompt";
 import { ShortenerConfigPrompt } from "./ShortenerConfigPrompt";
 
+import { Soundfont } from "../synth/soundfont"
+
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
 
 function buildOptions(menu: HTMLSelectElement, items: ReadonlyArray<string | number>): HTMLSelectElement {
@@ -942,6 +944,9 @@ export class SongEditor {
     private readonly _decimalOffsetRow: HTMLDivElement = div({ class: "selectRow dropFader" }, span({ class: "tip", style: "margin-left:10px;", onclick: () => this._openPrompt("decimalOffset") }, "‣ Offset:"), this._decimalOffsetSlider.container);
     private readonly _pulseWidthDropdownGroup: HTMLElement = div({ class: "editor-controls", style: "display: none;" }, this._decimalOffsetRow);
 
+    private readonly _soundfontPresetDropdown: HTMLSelectElement = buildOptions(select(), Object.values(Soundfont.loadedSoundfonts).map(sf => sf.name as string | number));
+    private readonly _soundfontPresetRow: HTMLDivElement = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("chipNoise") }, "Preset: "), div({ class: "selectContainer" }, this._soundfontPresetDropdown));
+
     private readonly _pitchShiftSlider: Slider = new Slider(input({ style: "margin: 0;", type: "range", min: "0", max: Config.pitchShiftRange - 1, value: "0", step: "1" }), this._doc, (oldValue: number, newValue: number) => new ChangePitchShift(this._doc, oldValue, newValue), true);
     private readonly _pitchShiftTonicMarkers: HTMLDivElement[] = [div({ class: "pitchShiftMarker", style: { color: ColorConfig.tonic } }), div({ class: "pitchShiftMarker", style: { color: ColorConfig.tonic, left: "50%" } }), div({ class: "pitchShiftMarker", style: { color: ColorConfig.tonic, left: "100%" } })];
     private readonly _pitchShiftFifthMarkers: HTMLDivElement[] = [div({ class: "pitchShiftMarker", style: { color: ColorConfig.fifthNote, left: (100 * 7 / 24) + "%" } }), div({ class: "pitchShiftMarker", style: { color: ColorConfig.fifthNote, left: (100 * 19 / 24) + "%" } })];
@@ -1133,6 +1138,7 @@ export class SongEditor {
 	this._chipWaveLoopEndRow,
 	this._chipWaveStartOffsetRow,
 	this._chipWavePlayBackwardsRow,
+    this._soundfontPresetRow,
         this._customWaveDraw,
         this._eqFilterTypeRow,
         this._eqFilterRow,
@@ -2605,6 +2611,20 @@ export class SongEditor {
                 this._feedbackRow2.style.display = "none";
             }
             this._pulseWidthSlider.input.title = prettyNumber(instrument.pulseWidth) + "%";
+
+            if (instrument.type == InstrumentType.soundfont) {
+                this._soundfontPresetRow.style.display = "";
+                    this._chipWaveSelectRow.style.display = "none";
+                    this._useChipWaveAdvancedLoopControlsRow.style.display = "none";
+                    this._chipWaveLoopModeSelectRow.style.display = "none";
+                    this._chipWaveLoopStartRow.style.display = "none";
+                    this._chipWaveLoopEndRow.style.display = "none";
+                    this._chipWaveStartOffsetRow.style.display = "none";
+                    this._chipWavePlayBackwardsRow.style.display = "none";
+                    this._chipNoiseSelectRow.style.display = "none";
+            } else {
+                this._soundfontPresetRow.style.display = "none";
+            }
 
 
             if (effectsIncludeTransition(instrument.effects)) {

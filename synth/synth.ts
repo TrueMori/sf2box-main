@@ -1457,6 +1457,7 @@ export class Instrument {
     public modulators: number[] = [];
     public modFilterTypes: number[] = [];
     public invalidModulators: boolean[] = [];
+    public soundfontPreset: number = 0;
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
