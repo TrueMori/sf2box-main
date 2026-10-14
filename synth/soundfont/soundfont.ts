@@ -1,6 +1,5 @@
 import { SongDocument } from "../../editor/SongDocument";
-import {ChipWave} from "../SynthConfig"
-import {riffChunks} from 'riff-chunks';
+import { performIntegral } from "../SynthConfig"
 
 interface InstrumentZone {
     low: number;
@@ -22,7 +21,9 @@ interface SoundfontPreset {
 export class Soundfont {
     public readonly url: string;
     public readonly name: string;
-    public readonly samples: Array<ChipWave>;
+    public readonly chipWaves: Float32Array[];
+    public readonly rawChipWaves: Float32Array[];
+    public readonly rawRawChipWaves: Float32Array[];
     public readonly presets: Array<SoundfontPreset>;
     public readonly success: Boolean;
 
@@ -40,7 +41,8 @@ export class Soundfont {
             name: "Loading...",
             instrumentZones: [],
         }];
-        return new Soundfont("Loading...", presets, [], "", false);
+        
+        return new Soundfont("Loading...", presets, [], [], [], "", false);
     }
 
     public static async loadSoundfont(url: string, index: number, doc: SongDocument): Promise<Soundfont> {
@@ -52,90 +54,91 @@ export class Soundfont {
         }).then((arrayBuffer) => {
             let name: string = "";
             let presets: SoundfontPreset[] = [];
+            let buffer = new Uint8Array(arrayBuffer);
+            let rawSample[];
+            let intSample[];
 
-            let buffer = new Uint8Array(arrayBuffer)
-
-            // SF2 files are stored in a RIFF format, so we use a parser. <-- me when i lie :3
-            // I am NOT making a parser myself. That'd be, like,
-            // reinventing the wheel twenty million times.
-            let chunks = riffChunks(buffer)
-            console.log(chunks);
-            if (!chunks.subChunks)
-                return Promise.reject(new Error("sf2 has no data."));
-            const infoChunk = chunks.subChunks[0];
-            if (!infoChunk?.subChunks)
-                return Promise.reject(new Error("sf2 has no info."));
-
-            // Try and get the name of the sf2, if it exists on it.
-            const nameChunk = infoChunk.subChunks.find((chunk) => chunk.chunkId == 'INAM');
-            if (nameChunk) {
-                const nameBytes = buffer.subarray(nameChunk.chunkData?.start, nameChunk.chunkData?.end);
-                name = new TextDecoder('ascii').decode(nameBytes).split('/0')[0];
-            }
-
-            // Get the preset names
-            const pdtaChunks = chunks.subChunks[2];
-            if (pdtaChunks.chunkSize == 0)
-                return Promise.reject(new Error("sf2 has no preset data."));
-
-                // Sometimes, the parser doesn't read this part correctly.
-                // Basically, manual labor.
-            // Find where pdta starts
+            // RIFF parser
             const decoder = new TextDecoder('ascii');
-            let pdtaOffset = -1;
-            for (let i = 0; i < buffer.length - 4; i++) {
-                if (decoder.decode(buffer.subarray(i, i+4)) == 'pdta') {
-                    pdtaOffset = i;
-                }
-            }
+            const chipWaves: Float32Array[] = [];
+            const rawChipWaves: Float32Array[] = [];
+            const rawRawChipWaves: Float32Array[] = [];
+            const view = new DataView(buffer.buffer);
+            let currByte = 0;
+            let postByte = currByte + 8;
+            let id: string;
+            let size: number;
+            while (currByte + 8 <= buffer.length) {
+                postByte = currByte + 8;
+                id = decoder.decode(buffer.subarray(currByte, currByte + 4));
+                size = view.getUint32(currByte + 4, true);
 
-            // Get presets in pdta
-            let offset = pdtaOffset;
-            let end = pdtaOffset + pdtaChunks.chunkSize;
-            offset += 4 //pdta header
-            while (offset + 8 <= end) {
-                console.log(offset);
-                const idByte = buffer.subarray(offset, offset+4);
-                const id = new TextDecoder('ascii').decode(idByte);
-                const size = (
-                    buffer[offset + 4] |
-                    (buffer[offset + 5] << 8) |
-                    (buffer[offset + 6] << 16) |
-                    (buffer[offset + 7] << 24)
-                ) >>> 0;
+                switch (id) {
+                    case 'INAM': // Name of soundbank
+                        console.log('Name');
+                        name = decoder.decode(buffer.subarray(postByte, postByte + size));
+                        currByte += 8 + size + (size % 2);
+                        break;
 
-                //first 20 bytes are the name of the preset.
-                if (id == 'phdr') {
-                    console.log("found")
-                    let cbit = offset + 8;
-                    const presetNameBytes = buffer.subarray(cbit, cbit + 20);
-                    const presetName = new TextDecoder('ascii').decode(presetNameBytes);
-                    const result: SoundfontPreset = {
-                        name: presetName,
-                        instrumentZones: [],
-                    };
-                    presets.push(result);
+                    case 'phdr': // Name of presets
+                        //name is always 20 bytes long
+                        console.log('Preset');
+                        const presetName = decoder.decode(buffer.subarray(postByte, postByte + 20));
+                        const result: SoundfontPreset = {
+                            name: presetName,
+                            instrumentZones: [],
+                        };
+                        presets.push(result);
+                        currByte += 8 + size + (size % 2);
+                        break;
+                    
+                    case 'smpl': // Raw sample data
+                        console.log('Sample');
+                        const samples = new Float32Array(Math.floor(size / 2));
+                        for (let i = 0; i < samples.length; i++) {
+                            samples[i] = (view.getInt16(postByte + i * 2, true) / 32768);
+                        }
+                        rawSample = centerWave(Array.from(samples));
+                        intSample = performIntegral(rawSample);
+                        currByte += 8 + size + (size % 2);
+                        break;
+
+                    default:
+                        currByte++; //loop through until we find a tag we want
                 }
-                console.log(id);
-                offset += 8 + size + (size%2);
+                
             }
             
             //Construct soundfont from data
-            const success = new Soundfont(name, presets, [], url, true);
+            const success = new Soundfont(name, presets, chipWaves, rawChipWaves, rawRawChipWaves, url, true);
             console.log(success)
             this.loadedSoundfonts[index] = success;
             
-            // TODO: Update the song document so changes are immediate to the soundfont dropdown
+            // TODO: Make this a bit more specific
             doc.notifier.changed();
             return success;
         });
     }
 
-    constructor(name: string, presets: SoundfontPreset[], samples: ChipWave[], url: string, success: boolean) {
+    constructor(name: string, presets: SoundfontPreset[], chipWaves: Float32Array[], rawChipWaves: Float32Array[], rawRawChipWaves: Float32Array[], url: string, success: boolean) {
         this.name = name;
         this.presets = presets;
-        this.samples = samples;
+        this.chipWaves = chipWaves;
+        this.rawChipWaves = rawChipWaves;
+        this.rawRawChipWaves = rawRawChipWaves;
         this.url = url;
         this.success = true
     }
+}
+
+// Borrowed from Config. TODO: idk but stop repeating code
+function centerWave(wave: Array<number>): Float32Array {
+    let sum: number = 0.0;
+    for (let i: number = 0; i < wave.length; i++) sum += wave[i];
+    const average: number = sum / wave.length;
+    for (let i: number = 0; i < wave.length; i++) wave[i] -= average;
+    performIntegral(wave);
+    // The first sample should be zero, and we'll duplicate it at the end for easier interpolation.
+    wave.push(0);
+    return new Float32Array(wave);
 }
