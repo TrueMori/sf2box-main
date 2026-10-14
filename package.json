@@ -45,6 +45,7 @@
 		"@types/jquery": "^3.5.5",
 		"@types/select2": "^4.0.53",
 		"imperative-html": "^0.1.0",
+		"riff-chunks": "^9.0.0",
 		"select2": "^4.0.13"
 	}
 }

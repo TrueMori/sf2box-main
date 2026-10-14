@@ -2619,16 +2619,41 @@ export class SongEditor {
             }
             this._pulseWidthSlider.input.title = prettyNumber(instrument.pulseWidth) + "%";
 
-            if (instrument.type == InstrumentType.soundfont) {
+            if (instrument.type == InstrumentType.soundfont && Soundfont.loadedSoundfonts[instrument.soundfont]) {
                 this._soundfontRow.style.display = "";
-                this._soundfontPresetRow.style.display = "";    
-                // Repopulate preset dropdown
+                this._soundfontPresetRow.style.display = "";
+
+                // Repopulate preset dropdown.
                 this._soundfontPresetDropdown.replaceChildren();
                 for (let i = 0; i < Soundfont.loadedSoundfonts[instrument.soundfont].presets.length; i++) {
                     this._soundfontPresetDropdown.appendChild(option({ value: i }, Soundfont.loadedSoundfonts[instrument.soundfont].presets[i].name));
                 }
+
+                // Repopulate soundfont dropdown.
+                this._soundfontDropdown.replaceChildren();
+                for (let i = 0; i < Soundfont.loadedSoundfonts.length; i++) {
+                    this._soundfontDropdown.appendChild(option({ value: i }, Soundfont.loadedSoundfonts[i].name));
+                }
+
                 setSelectedValue(this._soundfontDropdown, instrument.soundfont)
-                setSelectedValue(this._soundfontPresetDropdown, instrument.soundfontPreset);
+                
+                //Make sure the soundfont is loaded before selecing an invalid value.
+                if (Soundfont.loadedSoundfonts[instrument.soundfont].success) {
+                    setSelectedValue(this._soundfontPresetDropdown, instrument.soundfontPreset);
+                } else {
+                    setSelectedValue(this._soundfontPresetDropdown, 0);
+                }
+                    this._chipWaveSelectRow.style.display = "none";
+                    this._useChipWaveAdvancedLoopControlsRow.style.display = "none";
+                    this._chipWaveLoopModeSelectRow.style.display = "none";
+                    this._chipWaveLoopStartRow.style.display = "none";
+                    this._chipWaveLoopEndRow.style.display = "none";
+                    this._chipWaveStartOffsetRow.style.display = "none";
+                    this._chipWavePlayBackwardsRow.style.display = "none";
+                    this._chipNoiseSelectRow.style.display = "none";
+            } else if (instrument.type == InstrumentType.soundfont) { //Incase the soundfont hasnt loaded yet.
+                this._soundfontRow.style.display = "none";
+                this._soundfontPresetRow.style.display = "none";
                     this._chipWaveSelectRow.style.display = "none";
                     this._useChipWaveAdvancedLoopControlsRow.style.display = "none";
                     this._chipWaveLoopModeSelectRow.style.display = "none";
