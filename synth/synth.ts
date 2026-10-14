@@ -1458,6 +1458,7 @@ export class Instrument {
     public modFilterTypes: number[] = [];
     public invalidModulators: boolean[] = [];
     public soundfontPreset: number = 0;
+    public soundfont: number = 0;
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
@@ -2050,7 +2051,8 @@ export class Instrument {
                 instrumentObject["modFilterTypes"][mod] = this.modFilterTypes[mod];
             }
         } else if (this.type == InstrumentType.soundfont) {
-            // Nothing to save yet.
+            instrumentObject["soundfont"] = this.soundfont;
+            instrumentObject["soundfontPreset"] = this.soundfontPreset;
         } else {
             throw new Error("Unrecognized instrument type");
         }
@@ -2587,7 +2589,8 @@ export class Instrument {
                 }
             }
         } else if (this.type == InstrumentType.soundfont) {
-            // Nothing to load yet.
+            this.soundfont = instrumentObject["soundfont"];
+            this.soundfontPreset = instrumentObject["soundfontPreset"];
         }
 
         if (this.type != InstrumentType.mod) {
@@ -3463,8 +3466,7 @@ export class Song {
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
                 } else if (instrument.type == InstrumentType.soundfont) {
-                    buffer.push(SongTagCode.soundfont);
-                    // Nothing to save yet.
+                    buffer.push(SongTagCode.soundfont, base64IntToCharCode[instrument.soundfont], base64IntToCharCode[instrument.soundfontPreset]);
                 } else {
                     throw new Error("Unknown instrument type.");
                 }
@@ -4504,7 +4506,9 @@ export class Song {
 
             } break;
             case SongTagCode.soundfont: {
-                // Nothing to load yet.
+                const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                instrument.soundfont = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                instrument.soundfontPreset = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
             } break;
             case SongTagCode.stringSustain: {
                 const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
