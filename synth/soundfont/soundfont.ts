@@ -1,5 +1,6 @@
 // WORD: Uint16
 // DWORD: Uint32
+// CHAR: int8
 
 // Important document for anyone trying to decipher what this is doing: https://www.synthfont.com/SFSPEC21.PDF
 // Soundfonts use the RIFF file structure.
@@ -8,22 +9,16 @@ import { SongDocument } from "../../editor/SongDocument";
 import { Dictionary, performIntegral } from "../SynthConfig"
 
 const OPS: Dictionary<number> = {
-    keyRange: 44,
     instrument: 41,
+    keyRange: 44,
+    sampleID: 53,
 }
 
 interface InstrumentZone {
     minPitch: number,
     maxPitch: number,
     generators: Generator[],
-    sampleZones: Array<SampleZone>;
-}
-
-interface SampleZone {
-    name: string;
-    low: number;
-    opitch: number;
-    index: number; //index of sample in samples array
+    samples: SampleInfo[];
 }
 
 interface SoundfontPreset {
@@ -34,10 +29,25 @@ interface SoundfontPreset {
     instrumentZones: Array<InstrumentZone>;
 }
 
+interface Sample {
+    name: string,
+    loopStart: number,
+    loopEnd: number,
+    sampleRate: number,
+    originalPitch: number,
+    pCorrection: number;
+    index: number,
+}
+
 interface SampleInfo {
     name: string,
-    lowBound: number,
-    highBound: number,
+    sampleStart: number,
+    sampleEnd: number,
+    loopStart: number,
+    loopEnd: number,
+    sampleRate: number,
+    originalPitch: number,
+    pCorrection: number;
     index: number,
 }
 
@@ -110,7 +120,6 @@ export class Soundfont {
             const rawChipWaves: Float32Array[] = [];
             const rawRawChipWaves: Float32Array[] = [];
             const view = new DataView(buffer.buffer);
-            const sampleZones: SampleZone[] = [];
             const sampleInfo: SampleInfo[] = [];
             const pbag: Bag[] = [];
             const ibag: Bag[] = [];
@@ -227,13 +236,17 @@ export class Soundfont {
                             const recLocation = (currRecord * 46) + postByte;
                             sampleInfo.push({
                                 name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
-                                lowBound: view.getUint32(recLocation + 20, true),
-                                highBound: view.getUint32(recLocation + 24, true),
+                                sampleStart: view.getUint32(recLocation + 20, true),
+                                sampleEnd: view.getUint32(recLocation + 24, true),
+                                loopStart: view.getUint32(recLocation + 28, true),
+                                loopEnd: view.getUint32(recLocation + 32, true),
+                                sampleRate: view.getUint32(recLocation + 36, true),
+                                originalPitch: view.getUint8(recLocation + 40),
+                                pCorrection: view.getInt8(recLocation + 41),
                                 index: currRecord,
                             });
                             currRecord++;
                         }
-                        console.log(sampleZones);
                         currByte += 8 + size + (size % 2);
                         break;
                     
@@ -257,9 +270,9 @@ export class Soundfont {
             
             //Construct samples from info
             for (let sample of sampleInfo) {
-                chipWaves[sample.index] = rawSample.subarray(sample.lowBound, sample.highBound);
-                rawChipWaves[sample.index] = intSample.subarray(sample.lowBound, sample.highBound);
-                rawRawChipWaves[sample.index] = intSample.subarray(sample.lowBound, sample.highBound);
+                chipWaves[sample.index] = rawSample.subarray(sample.sampleStart, sample.sampleEnd);
+                rawChipWaves[sample.index] = intSample.subarray(sample.sampleStart, sample.sampleEnd);
+                rawRawChipWaves[sample.index] = intSample.subarray(sample.sampleStart, sample.sampleEnd);
             }
 
             //Construct instruments:
@@ -267,11 +280,14 @@ export class Soundfont {
             for (let instrument of inst) {
                 let minPitch = this.getKeyRange(instrument.bagIndex, ibag, igen)[0];
                 let maxPitch = this.getKeyRange(instrument.bagIndex, ibag, igen)[1];
+                const sampleIndicies: number[] = this.getGensOfType(instrument.bagIndex, ibag, igen, OPS.sampleID);
+                let samples: SampleInfo[] = [];
+                sampleIndicies.map((index) => samples.push(sampleInfo[index]));
                 instruments.push({
                     minPitch: minPitch,
                     maxPitch: maxPitch,
                     generators: this.getGenerators(instrument.bagIndex, ibag, igen),
-                    sampleZones: [],
+                    samples: samples,
                 });
             }
 
@@ -281,8 +297,8 @@ export class Soundfont {
                 console.log(pbag);
                 let minPitch = this.getKeyRange(preset.bagIndex, pbag, pgen)[0];
                 let maxPitch = this.getKeyRange(preset.bagIndex, pbag, pgen)[1];
-                let instrumentIndicies: number[] = this.getInstruments(preset.bagIndex, pbag, pgen);
-                let instZones: InstrumentZone[] = [];
+                const instrumentIndicies: number[] = this.getGensOfType(preset.bagIndex, pbag, pgen, OPS.instrument);
+                const instZones: InstrumentZone[] = [];
                 instrumentIndicies.map((index) => instZones.push(instruments[index]));
                 presets.push({
                     name: preset.name,
@@ -335,11 +351,11 @@ export class Soundfont {
         }
     }
 
-    private static getInstruments(bagIndex: number, bags: Bag[], gens: Generator[]): number[] { //indicies of instruments
+    private static getGensOfType(bagIndex: number, bags: Bag[], gens: Generator[], op: number): number[] { //returns array of amounts
         let generators = this.getGenerators(bagIndex, bags, gens);
         let result: number[] = [];
         for (const g of generators) {
-            if (g.op == OPS.instrument) {
+            if (g.op == op) {
                 result.push(g.amt);
             }
         }
