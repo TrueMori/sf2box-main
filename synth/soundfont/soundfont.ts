@@ -1,21 +1,54 @@
+// WORD: Uint16
+// DWORD: Uint32
+
+// Important document for anyone trying to decipher what this is doing: https://www.synthfont.com/SFSPEC21.PDF
+// Soundfonts use the RIFF file structure.
+
 import { SongDocument } from "../../editor/SongDocument";
 import { performIntegral } from "../SynthConfig"
 
 interface InstrumentZone {
-    low: number;
-    high: number;
+    minPitch: number,
+    maxPitch: number,
+    bag: Bag;
     sampleZones: Array<SampleZone>;
 }
 
 interface SampleZone {
+    name: string;
     low: number;
-    high: number;
-    sample: number; //index of sample in samples array
+    opitch: number;
+    index: number; //index of sample in samples array
 }
 
 interface SoundfontPreset {
-    name: string
+    name: string;
+    minPitch: number
+    maxPitch: number
+    bag: Bag;
     instrumentZones: Array<InstrumentZone>;
+}
+
+interface SampleInfo {
+    name: string,
+    lowBound: number,
+    highBound: number,
+    index: number,
+}
+
+interface Bag {
+    gens: number[]
+    mods: number[]
+}
+
+interface Generator {
+    op: number
+    amt: number
+}
+
+interface PHDR {
+    name: string,
+    bag: number, //index
 }
 
 export class Soundfont {
@@ -40,6 +73,9 @@ export class Soundfont {
         let presets: SoundfontPreset[] = [{
             name: "Loading...",
             instrumentZones: [],
+            minPitch: 0,
+            maxPitch: 0,
+            bag: {gens:[], mods:[]},
         }];
         
         return new Soundfont("Loading...", presets, [], [], [], "", false);
@@ -55,8 +91,8 @@ export class Soundfont {
             let name: string = "";
             let presets: SoundfontPreset[] = [];
             let buffer = new Uint8Array(arrayBuffer);
-            let rawSample[];
-            let intSample[];
+            let rawSample: Float32Array = new Float32Array;
+            let intSample: Float32Array = new Float32Array;
 
             // RIFF parser
             const decoder = new TextDecoder('ascii');
@@ -64,6 +100,15 @@ export class Soundfont {
             const rawChipWaves: Float32Array[] = [];
             const rawRawChipWaves: Float32Array[] = [];
             const view = new DataView(buffer.buffer);
+            const sampleZones: SampleZone[] = [];
+            const sampleInfo: SampleInfo[] = [];
+            const pbag: Bag[] = [];
+            const ibag: Bag[] = [];
+            const pgen: Generator[] = [];
+            const igen: Generator[] = [];
+            const phdr: PHDR[] = [];
+            let recordCount = 0;
+            let currRecord = 0;
             let currByte = 0;
             let postByte = currByte + 8;
             let id: string;
@@ -79,16 +124,90 @@ export class Soundfont {
                         name = decoder.decode(buffer.subarray(postByte, postByte + size));
                         currByte += 8 + size + (size % 2);
                         break;
+                    
+                    case 'pbag':
+                        recordCount = Math.floor(size / 4);
+                        currRecord = 0;
+                        const currGens: Generator[] = [];
+                        while (currRecord < recordCount - 1) {
+                            const recLocation = (currRecord * 4) + postByte;
+                            currGens.push({
+                                op: view.getUint16(recLocation, true),
+                                amt: view.getUint16(recLocation + 2, true),
+                            });
+                                
+                                
+                            currRecord + 1;
+                        }
+                        break;
+
+                    case 'ibag':
+                        recordCount = Math.floor(size / 4);
+                        currRecord = 0;
+                        while (currRecord < recordCount - 1) {
+                            const recLocation = (currRecord * 4) + postByte;
+                            ibag.push({
+                                gen: view.getUint16(recLocation, true),
+                                mod: view.getUint16(recLocation + 2, true),
+                            });
+                            currRecord + 1;
+                        }
+                        break;
+
+                    case 'pgen':
+                        recordCount = Math.floor(size / 4);
+                        currRecord = 0;
+                        while (currRecord < recordCount - 1) {
+                            const recLocation = (currRecord * 4) + postByte;
+                            pgen.push({
+                                op: view.getUint16(recLocation, true),
+                                amt: view.getUint16(recLocation + 2, true),
+                            });
+                            currRecord + 1;
+                        }
+                        break;
+
+                    case 'igen':
+                        recordCount = Math.floor(size / 4);
+                        currRecord = 0;
+                        while (currRecord < recordCount - 1) {
+                            const recLocation = (currRecord * 4) + postByte;
+                            igen.push({
+                                op: view.getUint16(recLocation, true),
+                                amt: view.getUint16(recLocation + 2, true),
+                            });
+                            currRecord + 1;
+                        }
+                        break;
 
                     case 'phdr': // Name of presets
-                        //name is always 20 bytes long
-                        console.log('Preset');
-                        const presetName = decoder.decode(buffer.subarray(postByte, postByte + 20));
-                        const result: SoundfontPreset = {
-                            name: presetName,
-                            instrumentZones: [],
-                        };
-                        presets.push(result);
+                        recordCount = Math.floor(size / 38); // Each preset is 38 bytes
+                        currRecord = 0;
+                        while (currRecord < recordCount - 1) {
+                            const recLocation = (currRecord * 38) + postByte;
+                            phdr.push({
+                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
+                                bag: view.getUint16(recLocation + 22, true),
+                            });
+                            currRecord++;
+                        }
+                        currByte += 8 + size + (size % 2);
+                        break;
+
+                    case 'shdr': // Sample info
+                        recordCount = Math.floor(size / 46) // Each sample is 46 bytes
+                        currRecord = 0;
+                        while (currRecord < recordCount - 1) {
+                            const recLocation = (currRecord * 46) + postByte;
+                            sampleInfo.push({
+                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
+                                lowBound: view.getUint32(recLocation + 20, true),
+                                highBound: view.getUint32(recLocation + 24, true),
+                                index: currRecord,
+                            });
+                            currRecord++;
+                        }
+                        console.log(sampleZones);
                         currByte += 8 + size + (size % 2);
                         break;
                     
@@ -100,6 +219,7 @@ export class Soundfont {
                         }
                         rawSample = centerWave(Array.from(samples));
                         intSample = performIntegral(rawSample);
+                        console.log(intSample.length); //so that the compiler doesnt yell at me about not using it.
                         currByte += 8 + size + (size % 2);
                         break;
 
@@ -109,6 +229,22 @@ export class Soundfont {
                 
             }
             
+            //Construct samples from info
+            for (let sample of sampleInfo) {
+                console.log(sample.name);
+                chipWaves[sample.index] = rawSample.subarray(sample.lowBound, sample.highBound);
+                rawChipWaves[sample.index] = intSample.subarray(sample.lowBound, sample.highBound);
+                rawRawChipWaves[sample.index] = intSample.subarray(sample.lowBound, sample.highBound);
+            }
+
+            //Construct presets:
+            for (let preset of phdr) {
+                presets.push({
+                    name: preset.name,
+                    minPitch: pbag[preset.bag]
+                })
+            }
+
             //Construct soundfont from data
             const success = new Soundfont(name, presets, chipWaves, rawChipWaves, rawRawChipWaves, url, true);
             console.log(success)
