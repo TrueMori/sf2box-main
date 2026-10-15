@@ -5,12 +5,17 @@
 // Soundfonts use the RIFF file structure.
 
 import { SongDocument } from "../../editor/SongDocument";
-import { performIntegral } from "../SynthConfig"
+import { Dictionary, performIntegral } from "../SynthConfig"
+
+const OPS: Dictionary<number> = {
+    keyRange: 44,
+    instrument: 41,
+}
 
 interface InstrumentZone {
     minPitch: number,
     maxPitch: number,
-    bag: Bag;
+    generators: Generator[],
     sampleZones: Array<SampleZone>;
 }
 
@@ -25,7 +30,7 @@ interface SoundfontPreset {
     name: string;
     minPitch: number
     maxPitch: number
-    bag: Bag;
+    generators: Generator[],
     instrumentZones: Array<InstrumentZone>;
 }
 
@@ -37,8 +42,8 @@ interface SampleInfo {
 }
 
 interface Bag {
-    gens: number[]
-    mods: number[]
+    genIndex: number
+    modIndex: number
 }
 
 interface Generator {
@@ -48,7 +53,12 @@ interface Generator {
 
 interface PHDR {
     name: string,
-    bag: number, //index
+    bagIndex: number, //index
+}
+
+interface INST {
+    name: string,
+    bagIndex: number,
 }
 
 export class Soundfont {
@@ -62,7 +72,7 @@ export class Soundfont {
 
     public static readonly soundfontURLS: Array<string> = [
         "https://file.garden/ZxBw28OpLwxBlXVc/electric%20piano/African_Percussion.sf2",
-        "https://file.garden/ZxBw28OpLwxBlXVc/Bluegrass_Banjo.sf2",
+        "https://file.garden/ZxBw28OpLwxBlXVc/SRX_Acoustic_Bass.sf2",
     ];
 
     public static readonly loadedSoundfonts: Array<Soundfont> = [
@@ -75,7 +85,7 @@ export class Soundfont {
             instrumentZones: [],
             minPitch: 0,
             maxPitch: 0,
-            bag: {gens:[], mods:[]},
+            generators: [],
         }];
         
         return new Soundfont("Loading...", presets, [], [], [], "", false);
@@ -107,6 +117,7 @@ export class Soundfont {
             const pgen: Generator[] = [];
             const igen: Generator[] = [];
             const phdr: PHDR[] = [];
+            const inst: INST[] = [];
             let recordCount = 0;
             let currRecord = 0;
             let currByte = 0;
@@ -125,69 +136,84 @@ export class Soundfont {
                         currByte += 8 + size + (size % 2);
                         break;
                     
-                    case 'pbag':
+                    case 'pbag': // Holds generators and modulators
                         recordCount = Math.floor(size / 4);
                         currRecord = 0;
-                        const currGens: Generator[] = [];
-                        while (currRecord < recordCount - 1) {
+                        while (currRecord < recordCount) {
                             const recLocation = (currRecord * 4) + postByte;
-                            currGens.push({
-                                op: view.getUint16(recLocation, true),
-                                amt: view.getUint16(recLocation + 2, true),
-                            });
-                                
-                                
-                            currRecord + 1;
+                            pbag.push({
+                                genIndex: view.getUint16(recLocation, true),
+                                modIndex: view.getUint16(recLocation + 2, true),
+                            });  
+                            currRecord++;
                         }
+                        currByte += 8 + size + (size % 2);
                         break;
 
                     case 'ibag':
                         recordCount = Math.floor(size / 4);
                         currRecord = 0;
-                        while (currRecord < recordCount - 1) {
+                        while (currRecord < recordCount) {
                             const recLocation = (currRecord * 4) + postByte;
                             ibag.push({
-                                gen: view.getUint16(recLocation, true),
-                                mod: view.getUint16(recLocation + 2, true),
+                                genIndex: view.getUint16(recLocation, true),
+                                modIndex: view.getUint16(recLocation + 2, true),
                             });
-                            currRecord + 1;
+                            currRecord++;
                         }
+                        currByte += 8 + size + (size % 2);
                         break;
 
-                    case 'pgen':
+                    case 'pgen': // Operators and amounts
                         recordCount = Math.floor(size / 4);
                         currRecord = 0;
-                        while (currRecord < recordCount - 1) {
+                        while (currRecord < recordCount) {
                             const recLocation = (currRecord * 4) + postByte;
                             pgen.push({
                                 op: view.getUint16(recLocation, true),
                                 amt: view.getUint16(recLocation + 2, true),
-                            });
-                            currRecord + 1;
+                            })
+                            currRecord++;
                         }
+                        currByte += 8 + size + (size % 2);
                         break;
 
                     case 'igen':
                         recordCount = Math.floor(size / 4);
                         currRecord = 0;
-                        while (currRecord < recordCount - 1) {
+                        while (currRecord < recordCount) {
                             const recLocation = (currRecord * 4) + postByte;
                             igen.push({
                                 op: view.getUint16(recLocation, true),
                                 amt: view.getUint16(recLocation + 2, true),
                             });
-                            currRecord + 1;
+                            currRecord++;
                         }
+                        currByte += 8 + size + (size % 2);
                         break;
 
-                    case 'phdr': // Name of presets
+                    case 'inst': // Instrument info
+                        recordCount = Math.floor(size / 22)
+                        currRecord = 0;
+                        while (currRecord < recordCount - 1) {
+                            const recLocation = (currRecord * 22) + postByte;
+                           inst.push({
+                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
+                                bagIndex: view.getUint16(recLocation + 20, true),
+                            });
+                            currRecord++;
+                        }
+                        currByte += 8 + size + (size % 2);
+                        break;
+
+                    case 'phdr': // Preset info
                         recordCount = Math.floor(size / 38); // Each preset is 38 bytes
                         currRecord = 0;
                         while (currRecord < recordCount - 1) {
                             const recLocation = (currRecord * 38) + postByte;
                             phdr.push({
                                 name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
-                                bag: view.getUint16(recLocation + 22, true),
+                                bagIndex: view.getUint16(recLocation + 24, true),
                             });
                             currRecord++;
                         }
@@ -231,17 +257,39 @@ export class Soundfont {
             
             //Construct samples from info
             for (let sample of sampleInfo) {
-                console.log(sample.name);
                 chipWaves[sample.index] = rawSample.subarray(sample.lowBound, sample.highBound);
                 rawChipWaves[sample.index] = intSample.subarray(sample.lowBound, sample.highBound);
                 rawRawChipWaves[sample.index] = intSample.subarray(sample.lowBound, sample.highBound);
             }
 
+            //Construct instruments:
+            const instruments: InstrumentZone[] = [];
+            for (let instrument of inst) {
+                let minPitch = this.getKeyRange(instrument.bagIndex, ibag, igen)[0];
+                let maxPitch = this.getKeyRange(instrument.bagIndex, ibag, igen)[1];
+                instruments.push({
+                    minPitch: minPitch,
+                    maxPitch: maxPitch,
+                    generators: this.getGenerators(instrument.bagIndex, ibag, igen),
+                    sampleZones: [],
+                });
+            }
+
             //Construct presets:
             for (let preset of phdr) {
+                console.log(preset.bagIndex)
+                console.log(pbag);
+                let minPitch = this.getKeyRange(preset.bagIndex, pbag, pgen)[0];
+                let maxPitch = this.getKeyRange(preset.bagIndex, pbag, pgen)[1];
+                let instrumentIndicies: number[] = this.getInstruments(preset.bagIndex, pbag, pgen);
+                let instZones: InstrumentZone[] = [];
+                instrumentIndicies.map((index) => instZones.push(instruments[index]));
                 presets.push({
                     name: preset.name,
-                    minPitch: pbag[preset.bag]
+                    minPitch: minPitch,
+                    maxPitch: maxPitch,
+                    generators: this.getGenerators(preset.bagIndex, pbag, pgen),
+                    instrumentZones: instZones,
                 })
             }
 
@@ -254,6 +302,48 @@ export class Soundfont {
             doc.notifier.changed();
             return success;
         });
+    }
+
+    private static getGenerators(bagIndex: number, bags: Bag[], gens: Generator[]): Generator[] {
+        if (bagIndex < 0 || bagIndex >= bags.length - 1) {
+            throw new Error(`Invalid bag index ${bagIndex}; expected 0–${bags.length - 2}`);
+        }
+
+        // Check for a global bag
+        let global = 0;
+        const tempGlobal = gens.slice();
+        const gStart = bags[0].genIndex;
+        const gEnd = bags[1].genIndex;
+        if (!tempGlobal.slice(gStart, gEnd).find((g) => g.op == OPS.instrument))
+            global = 1;
+
+        const start = bags[bagIndex + global].genIndex;
+        const end = bags[bagIndex + 1 + global].genIndex;
+        const tempGens = gens.slice();
+        return tempGens.slice(start, end);
+    }
+
+    private static getKeyRange(bagIndex: number, bags: Bag[], gens: Generator[]): number[] { //minimum and maximum respectively
+        let generators = this.getGenerators(bagIndex, bags, gens);
+        let keyRangeGen = generators.find((g) => g.op == OPS.keyRange)
+        if (keyRangeGen) {
+            let high = keyRangeGen.amt >>> 16;
+            let low = keyRangeGen.amt & 0xFFFF;
+            return [high, low];
+        } else {
+            return [0, 127]; //default to all pitches
+        }
+    }
+
+    private static getInstruments(bagIndex: number, bags: Bag[], gens: Generator[]): number[] { //indicies of instruments
+        let generators = this.getGenerators(bagIndex, bags, gens);
+        let result: number[] = [];
+        for (const g of generators) {
+            if (g.op == OPS.instrument) {
+                result.push(g.amt);
+            }
+        }
+        return result;
     }
 
     constructor(name: string, presets: SoundfontPreset[], chipWaves: Float32Array[], rawChipWaves: Float32Array[], rawRawChipWaves: Float32Array[], url: string, success: boolean) {
