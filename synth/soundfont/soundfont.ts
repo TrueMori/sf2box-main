@@ -533,6 +533,30 @@ export class Soundfont {
         }
         return generators;
     }
+
+    public static getGeneratorsOfLevelFromMidiPitch(soundfontIndex: number, presetIndex: number, pitch: number, level: number): Generator[] {
+        const generators: Generator[] = [];
+        const sf = Soundfont.loadedSoundfonts[soundfontIndex];
+        const preset = sf.presets[presetIndex];
+        if (level == 0) {
+            preset.globalGens.forEach((gen) => generators.push(gen));
+        }
+        for (let pZone of preset.presetZones) {
+            if (pitch >= pZone.minPitch && pitch <= pZone.maxPitch && level == 1) {
+                pZone.gens.forEach((gen) => generators.push(gen));
+            }
+            if (pitch >= pZone.minPitch && pitch <= pZone.maxPitch && level == 2) {
+                pZone.instrument.globalGens.forEach((gen) => generators.push(gen));
+            }
+            for (let iZone of pZone.instrument.instrumentZones) {
+                if (pitch >= iZone.minPitch && pitch <= iZone.maxPitch && level == 3) {
+                    iZone.gens.forEach((gen) => generators.push(gen));
+                }
+            }
+        }
+        return generators;
+    }
+
     constructor(name: string, presets: Preset[], chipWaves: Float32Array[], rawChipWaves: Float32Array[], rawRawChipWaves: Float32Array[], sampleInfo: SampleInfo[], url: string, success: boolean) {
         this.name = name;
         this.presets = presets;

@@ -10485,9 +10485,11 @@ export class Synth {
 
 
             const sampleIndicies = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0]);
-            const gens = Soundfont.getGeneratorsFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0])
-            const loopModeGen = gens.find((gen) => gen.op == OPS.sampleMode);
-            const loopMode = loopModeGen ? loopModeGen.amt : 0
+            const gInstrumentGens = Soundfont.getGeneratorsOfLevelFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0], 2);
+            const lInstrumentGens = Soundfont.getGeneratorsOfLevelFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0], 3);
+
+            const loopMode = lInstrumentGens.find((gen) => gen.op == OPS.sampleMode)?.amt ?? gInstrumentGens.find((gen) => gen.op = OPS.sampleMode)?.amt ?? 0;
+
             instrumentState.currSoundfontPitchSampleIndicies.set(tone.pitches[0], sampleIndicies);
             instrumentState.currSoundfontPitchSampleMode.set(tone.pitches[0], loopMode);
 
@@ -11856,8 +11858,6 @@ export class Synth {
 
         if (!currSample)
             return;
-
-
         
         const waveLength = currSample.length;
         const rootFreq = Instrument.frequencyFromPitch(sInfo.originalPitch + sInfo.pCorrection);
