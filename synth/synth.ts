@@ -6,7 +6,8 @@ import { scaleElementsByFactor, inverseRealFourierTransform } from "./FFT";
 import { Deque } from "./Deque";
 import { events } from "../global/Events";
 import { FilterCoefficients, FrequencyResponse, DynamicBiquadFilter, warpInfinityToNyquist } from "./filtering";
-import { Soundfont } from "./soundfont/soundfont";
+import { OPS, Soundfont } from "./soundfont/soundfont";
+
 
 declare global {
     interface Window {
@@ -7569,6 +7570,7 @@ class InstrumentState {
     public reverbShelfPrevInput3: number = 0.0;
 
     public currSoundfontPitchSampleIndicies: Map<number, number[]> = new Map<number, number[]>;
+    public currSoundfontPitchSampleMode: Map<number, number> = new Map<number, number>;
     public soundfontIndex: number = 0;
     public soundfontPresetIndex: number = 0;
 
@@ -10127,6 +10129,7 @@ export class Synth {
                 // This is always determined in computeTone, so we have to clear it here before the next compute.
                 if (instrumentState.type == InstrumentType.soundfont) {
                     instrumentState.currSoundfontPitchSampleIndicies.clear();
+                    instrumentState.currSoundfontPitchSampleMode.clear();
                 }
 
                 let toneCount: number = 0;
@@ -10476,14 +10479,17 @@ export class Synth {
             pitchDamping = 1.0;
             basePitch = 0;
         } else if (instrument.type == InstrumentType.soundfont) {
-            let sampleInfo = Soundfont.loadedSoundfonts[instrument.soundfont].sampleInfo
-            let currSample = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0])[0];
+            //let sampleInfo = Soundfont.loadedSoundfonts[instrument.soundfont].sampleInfo
+            //let currSample = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0])[0];
             baseExpression = Config.soundfontBaseExpression;
-            if (sampleInfo[currSample])
-                basePitch = sampleInfo[currSample].originalPitch;
 
-            let sampleIndicies = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0]);
+
+            const sampleIndicies = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0]);
+            const gens = Soundfont.getGeneratorsFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0])
+            const loopModeGen = gens.find((gen) => gen.op == OPS.sampleMode);
+            const loopMode = loopModeGen ? loopModeGen.amt : 0
             instrumentState.currSoundfontPitchSampleIndicies.set(tone.pitches[0], sampleIndicies);
+            instrumentState.currSoundfontPitchSampleMode.set(tone.pitches[0], loopMode);
 
         } else {
             throw new Error("Unknown instrument type in computeTone.");
@@ -11838,35 +11844,93 @@ export class Synth {
         }
     private static soundfontSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
         const sampleIndicies = instrumentState.currSoundfontPitchSampleIndicies.get(tone.pitches[0]);
+        const loopMode = instrumentState.currSoundfontPitchSampleMode.get(tone.pitches[0]);
         const sf: Soundfont = Soundfont.loadedSoundfonts[instrumentState.soundfontIndex];
+        //const sampleGens = Soundfont.getGeneratorsFromMidiPitch(instrumentState.soundfontIndex, instrumentState.soundfontPresetIndex, tone.pitches[0]);
+
         if (!sampleIndicies)
             return;
 
         const currSample = sf.chipWaves[sampleIndicies[0]]; // TODO: allow for multiple samples to play at once
-        let expression: number = +tone.expression;
-        const expressionDelta: number = +tone.expressionDelta;
+        const sInfo = sf.sampleInfo[sampleIndicies[0]];
 
         if (!currSample)
             return;
+
+
         
         const waveLength = currSample.length;
+        const rootFreq = Instrument.frequencyFromPitch(sInfo.originalPitch + sInfo.pCorrection);
+        const loopStart = sInfo.loopStart;
+        const loopEnd = sInfo.loopEnd;
+        const loopRange = loopEnd - loopStart;
+        const crossFadeLength = Math.min(Math.round(sInfo.sampleRate * 0.005), Math.floor(loopRange / 2));
+        console.log(loopMode);
+        const canLoop = (loopMode == 1 || loopMode == 3) ? true : false;
+        const crossFadeStart = loopEnd - crossFadeLength;
+        const applyFilters: Function = Synth.applyFilters;
+        let expression: number = +tone.expression;
+        const expressionDelta: number = +tone.expressionDelta;
+        let initialFilterInput1: number = +tone.initialNoteFilterInput1;
+        let initialFilterInput2: number = +tone.initialNoteFilterInput2;
+        const filters: DynamicBiquadFilter[] = tone.noteFilters;
+        const filterCount: number = tone.noteFilterCount | 0;
+        const volumeScale = instrumentState.volumeScale;
 
-        let phaseDelta: number = tone.phaseDeltas[0] * waveLength / 100;
-        const phaseDeltaScale: number = +tone.phaseDeltaScales[0];
+        //helper function so we dont gotta write it out a bajillion times, mostly due to crossfading
+        const readSample = (position: number): number => { 
+            const index = Math.floor(position);
+            const fraction = position - index;
+
+            const a = currSample[index] ?? 0;
+            const b = currSample[index + 1] ?? a;
+
+            return a + (b - a) * fraction;
+        };
+
         let phase: number = tone.phases[0] * waveLength;
+        let phaseDelta: number = tone.phaseDeltas[0] * sInfo.sampleRate / rootFreq
+        const phaseDeltaScale: number = +tone.phaseDeltaScales[0];
 
         const data: Float32Array = synth.tempMonoInstrumentSampleBuffer!;
         const stopIndex: number = bufferIndex + roundedSamplesPerTick;
         for (let sampleIndex: number = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
-            phase += phaseDelta; // Advance phase.
-            phaseDelta *= phaseDeltaScale; // Advance phaseDelta.
-            const output: number = currSample[(phase) | 0] * expression;
+            let inputSample: number = 0;
+
+            if (canLoop && phase >= loopEnd) {
+                phase = loopStart + ((phase - loopStart) % loopRange);
+            }
+
+            if (canLoop && phase >= crossFadeStart && phase < loopEnd) { //do crossfade
+                const t = (phase - crossFadeStart) / crossFadeLength;
+                const outgoing = readSample(phase);
+                const incomingPosition = loopStart + (phase - crossFadeStart);
+                const incoming = readSample(incomingPosition);
+                inputSample = outgoing * (1 - t) + incoming * t;
+            } else if (phase < waveLength) {
+                inputSample = readSample(phase);
+            }
+
+            const sample = applyFilters(inputSample * volumeScale, initialFilterInput1, initialFilterInput2, filterCount, filters);
+            const output: number = sample * expression;
+            
+            data[sampleIndex] += output
+            
+            initialFilterInput2 = initialFilterInput1;
+            initialFilterInput1 = inputSample * volumeScale;
+
+            phase += phaseDelta;
+            phaseDelta *= phaseDeltaScale;
             expression += expressionDelta;
-            data[sampleIndex] += output;
         }
 
         tone.phases[0] = phase / waveLength;
-        tone.phaseDeltas[0] = phaseDelta / waveLength;
+        tone.phaseDeltas[0] = phaseDelta * rootFreq / sInfo.sampleRate;
+        tone.expression = expression;
+
+        synth.sanitizeFilters(filters);
+        tone.initialNoteFilterInput1 = initialFilterInput1;
+        tone.initialNoteFilterInput2 = initialFilterInput2;
     }
 
     private static chipSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {

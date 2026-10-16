@@ -3,14 +3,26 @@
 // CHAR: int8
 
 // Important document for anyone trying to decipher what this is doing: https://www.synthfont.com/SFSPEC21.PDF
+// Page 7 denotes data types, page 16 gives an overview to the whole structure
 // Soundfonts use the RIFF file structure.
 
 import { Dictionary, performIntegral } from "../SynthConfig"
 
-const OPS: Dictionary<number> = {
+export const OPS: Dictionary<number> = {
     instrument: 41,
     keyRange: 43,
+    coarseTune: 51,
+    fineTune: 52,
     sampleID: 53,
+    sampleMode: 54,
+    overridingRootKey: 58,
+}
+
+enum sampleMode { //loop types
+    noLoop,
+    continuousLoop,
+    unused,
+    loopUntilEnd,
 }
 
 interface Instrument {
@@ -33,6 +45,7 @@ interface InstrumentZone {
     minPitch: number,
     maxPitch: number,
     sampleIndex: number,
+    loopType: sampleMode,
     gens: Generator[],
 }
 
@@ -60,7 +73,7 @@ interface Bag {
     modIndex: number
 }
 
-interface Generator {
+export interface Generator {
     op: number
     amt: number
 }
@@ -88,10 +101,10 @@ export class Soundfont {
 
     public static readonly soundfontURLS: Array<string> = [
         "https://file.garden/ZxBw28OpLwxBlXVc/Bluegrass_Banjo.sf2",
-        "https://file.garden/ZxBw28OpLwxBlXVc/electric%20piano/African_Percussion.sf2",
+        "https://dl.dropboxusercontent.com/scl/fi/dj4nt17jx1lhau1q8x508/The-Definitive-Perfect-Drums-Soundfont-Fixed-Mapped.sf2?rlkey=bypbksjrvx40b57hsek042czv&st=bkwrj8y0&raw=1",
         "https://file.garden/ZxBw28OpLwxBlXVc/SRX_Acoustic_Bass.sf2",
-        "https://dl.dropboxusercontent.com/scl/fi/r8d0onhkqhc5lrq1o5e8m/SC-55.sf2?rlkey=z9l0nyivx05cz9k5mzhie5clj&e=1&raw=1",
-    ]
+        "https://dl.dropboxusercontent.com/scl/fi/5dgonx0uhlasjwxlkgy00/CTinstruments.sf2?rlkey=4fhyvithjjxjyliy7lrilmrym&st=450mbyf8&dl=0",
+    ];
 
     public static readonly loadedSoundfonts: Array<Soundfont> = [
     ];
@@ -112,11 +125,13 @@ export class Soundfont {
     //TODO: make the doc parameter not any, right now its a circular dependancy
     public static async loadSoundfont(url: string, sfIndex: number, doc: any): Promise<Soundfont> {
         return fetch(url).then((response) => {
+            console.log("Fetching "+url+"...");
             if (!response.ok) {
                 return Promise.reject(new Error("Couldn't load sf2."));
             }
             return response.arrayBuffer();
         }).then((arrayBuffer) => {
+            console.log("Loading "+url+". Size of data: " + arrayBuffer.byteLength + " bytes.");
             let name: string = "";
             let presets: Preset[] = [];
             let buffer = new Uint8Array(arrayBuffer);
@@ -148,9 +163,17 @@ export class Soundfont {
                 size = view.getUint32(currByte + 4, true);
 
                 switch (id) {
+                    //all the stuff we wanna skip over. could be coded better but lmao
+                    case 'LIST': case 'RIFF':
+                        currByte += 12;
+                        break;
+
+                    case 'ifil': case 'isng': case 'irom': case 'iver': case 'ICRD': case 'IENG': case 'IPRD': case 'ICOP': case 'ICMT': case 'ISFT': case 'pmod': case 'imod':
+                        currByte += 8 + size + (size % 2);
+                        break;
+
                     case 'INAM': // Name of soundbank
-                        console.log('Name');
-                        name = decoder.decode(buffer.subarray(postByte, postByte + size));
+                        name = decoder.decode(buffer.subarray(postByte, postByte + size)).replace(/\0+$/, "");
                         currByte += 8 + size + (size % 2);
                         break;
                     
@@ -215,10 +238,18 @@ export class Soundfont {
                         currRecord = 0;
                         while (currRecord < recordCount) {
                             const recLocation = (currRecord * 22) + postByte;
+                            console.log({
+                                bufferSize: view.buffer.byteLength,
+                                viewOffset: view.byteOffset,
+                                viewSize: view.byteLength,
+                                recLocation,
+                                requestedOffset: recLocation + 20,
+                            });
                            inst.push({
-                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
+                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)).split('\0')[0],
                                 bagIndex: view.getUint16(recLocation + 20, true),
                             });
+                            console.log(decoder.decode(buffer.subarray(recLocation, recLocation + 20)));
                             currRecord++;
                         }
                         currByte += 8 + size + (size % 2);
@@ -230,7 +261,7 @@ export class Soundfont {
                         while (currRecord < recordCount) {
                             const recLocation = (currRecord * 38) + postByte;
                             phdr.push({
-                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
+                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)).split('\0')[0],
                                 bagIndex: view.getUint16(recLocation + 24, true),
                             });
                             currRecord++;
@@ -244,11 +275,11 @@ export class Soundfont {
                         while (currRecord < recordCount) {
                             const recLocation = (currRecord * 46) + postByte;
                             sampleInfo.push({
-                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
+                                name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)).split('\0')[0],
                                 sampleStart: view.getUint32(recLocation + 20, true),
                                 sampleEnd: view.getUint32(recLocation + 24, true),
-                                loopStart: view.getUint32(recLocation + 28, true),
-                                loopEnd: view.getUint32(recLocation + 32, true),
+                                loopStart: view.getUint32(recLocation + 28, true) - view.getUint32(recLocation + 20, true), //we do this to get the relative position of the loop rather than the position in the entire sample chunk
+                                loopEnd: view.getUint32(recLocation + 32, true) - view.getUint32(recLocation + 20, true),
                                 sampleRate: view.getUint32(recLocation + 36, true),
                                 originalPitch: view.getUint8(recLocation + 40),
                                 pCorrection: view.getInt8(recLocation + 41),
@@ -260,19 +291,17 @@ export class Soundfont {
                         break;
                     
                     case 'smpl': // Raw sample data
-                        console.log('Sample');
-                        const samples = new Float32Array(Math.floor(size / 2));
+                        const samples: Float32Array = new Float32Array(Math.floor(size / 2));
                         for (let i = 0; i < samples.length; i++) {
                             samples[i] = (view.getInt16(postByte + i * 2, true) / 32768);
                         }
-                        rawSample = centerWave(Array.from(samples));
+                        rawSample = centerWave(samples);
                         intSample = performIntegral(rawSample);
-                        console.log(intSample.length); //so that the compiler doesnt yell at me about not using it.
                         currByte += 8 + size + (size % 2);
                         break;
 
                     default:
-                        currByte++; //loop through until we find a tag we want
+                        return Promise.reject("Bad SF2 file.");
                 }
                 
             }
@@ -286,7 +315,7 @@ export class Soundfont {
             for (let sample of sampleInfo) {
                 chipWaves[sample.index] = rawSample.subarray(sample.sampleStart, sample.sampleEnd);
                 rawChipWaves[sample.index] = intSample.subarray(sample.sampleStart, sample.sampleEnd);
-                rawRawChipWaves[sample.index] = intSample.subarray(sample.sampleStart, sample.sampleEnd);
+                //rawRawChipWaves[sample.index] = intSample.subarray(sample.sampleStart, sample.sampleEnd); no need for this yet, only serves to eat memory
             }
 
             //Construct instruments:
@@ -304,11 +333,13 @@ export class Soundfont {
                     const mnPitch = this.getKeyRange(zoneGens)[0];
                     const mxPitch = this.getKeyRange(zoneGens)[1];
                     const sampleIndex = this.getGensOfType(zoneGens, OPS.sampleID)[0];
+                    const loopType = this.getGensOfType(zoneGens, OPS.sampleMode);
                     instrumentZones.push({
                         minPitch: mnPitch,
                         maxPitch: mxPitch,
                         sampleIndex: sampleIndex,
                         gens: zoneGens,
+                        loopType: (loopType.length > 0) ? loopType[0] : 0,  
                     });
                 }
                 instruments.push({
@@ -331,7 +362,6 @@ export class Soundfont {
                 const maxPitch = this.getKeyRange(generators)[1];
                 const presetZones: PresetZone[] = [];
                 for (let i = bagRange[0]; i < bagRange[1] - global; i++) {
-                    console.log("generating presetZone");
                     const zoneGens = this.getPresetBagGenerators(i, pbag, pgen);
                     const mnPitch = this.getKeyRange(zoneGens)[0];  
                     const mxPitch = this.getKeyRange(zoneGens)[1];
@@ -343,7 +373,6 @@ export class Soundfont {
                         instrument: instrument,
                         gens: zoneGens,
                     });
-                    console.log(presetZones);
                 }
                 presets.push({
                     name: preset.name,
@@ -358,7 +387,7 @@ export class Soundfont {
             //Construct soundfont from data
             const success = new Soundfont(name, presets, chipWaves, rawChipWaves, rawRawChipWaves, sampleInfo, url, true);
             this.loadedSoundfonts[sfIndex] = success;
-            console.log(success);
+            console.log("Loading successful!: ", success);
             
             // TODO: Make this a bit more specific
             doc.notifier.changed();
@@ -488,6 +517,22 @@ export class Soundfont {
         return waves;
     }
 
+    public static getGeneratorsFromMidiPitch(soundfontIndex: number, presetIndex: number, pitch: number): Generator[] {
+        const generators: Generator[] = [];
+        const sf = Soundfont.loadedSoundfonts[soundfontIndex];
+        const preset = sf.presets[presetIndex];
+        preset.globalGens.forEach((gen) => generators.push(gen));
+        for (let pZone of preset.presetZones) {
+            for (let iZone of pZone.instrument.instrumentZones) {
+                if (pitch >= iZone.minPitch && pitch <= iZone.maxPitch) {
+                    pZone.gens.forEach((gen) => generators.push(gen));
+                    pZone.instrument.globalGens.forEach((gen) => generators.push(gen));
+                    iZone.gens.forEach((gen) => generators.push(gen));
+                }
+            }
+        }
+        return generators;
+    }
     constructor(name: string, presets: Preset[], chipWaves: Float32Array[], rawChipWaves: Float32Array[], rawRawChipWaves: Float32Array[], sampleInfo: SampleInfo[], url: string, success: boolean) {
         this.name = name;
         this.presets = presets;
@@ -501,13 +546,15 @@ export class Soundfont {
 }
 
 // Borrowed from Config. TODO: idk but stop repeating code
-function centerWave(wave: Array<number>): Float32Array {
+function centerWave(wave: Float32Array): Float32Array {
     let sum: number = 0.0;
     for (let i: number = 0; i < wave.length; i++) sum += wave[i];
     const average: number = sum / wave.length;
     for (let i: number = 0; i < wave.length; i++) wave[i] -= average;
     performIntegral(wave);
     // The first sample should be zero, and we'll duplicate it at the end for easier interpolation.
-    wave.push(0);
-    return new Float32Array(wave);
+    const result = new Float32Array(wave.length + 1);
+    result.set(wave);
+    result[wave.length] = 0;
+    return result;
 }
