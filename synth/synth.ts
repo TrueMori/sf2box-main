@@ -7568,7 +7568,7 @@ class InstrumentState {
     public reverbShelfPrevInput2: number = 0.0;
     public reverbShelfPrevInput3: number = 0.0;
 
-    public soundfontWaves: Float32Array[] | null = null;
+    public currSoundfontPitchSampleIndicies: Map<number, number[]> = new Map<number, number[]>;
     public soundfontIndex: number = 0;
     public soundfontPresetIndex: number = 0;
 
@@ -8195,22 +8195,6 @@ class InstrumentState {
             this.unisonExpression = instrument.unisonExpression;
             this.unisonSign = instrument.unisonSign;
         } else if (instrument.type == InstrumentType.soundfont) {
-            const waveIndicies: number[] = Soundfont.getAllPresetSamples(instrument.soundfont, instrument.soundfontPreset);
-            const chipWaves: Float32Array[] = [];
-            const rawChipWaves: Float32Array[] = [];
-            waveIndicies.map((i) => {
-                chipWaves[i] = Soundfont.loadedSoundfonts[instrument.soundfont].chipWaves[i];
-                rawChipWaves[i] = Soundfont.loadedSoundfonts[instrument.soundfont].rawChipWaves[i];
-            });
-            if (this.aliases) {
-                for (let chipWave of chipWaves) {
-                    this.soundfontWaves?.push(chipWave);
-                }
-            } else {
-                for (let rawChipWave of rawChipWaves) {
-                    this.soundfontWaves?.push(rawChipWave);
-                }
-            }
             this.soundfontIndex = instrument.soundfont;
             this.soundfontPresetIndex = instrument.soundfontPreset;
                 this.isUsingAdvancedLoopControls = instrument.isUsingAdvancedLoopControls;
@@ -10139,6 +10123,12 @@ export class Synth {
             for (let instrumentIndex: number = 0; instrumentIndex < channel.instruments.length; instrumentIndex++) {
                 const instrumentState: InstrumentState = channelState.instruments[instrumentIndex];
                 const toneList: Deque<Tone> = instrumentState.activeTones;
+
+                // This is always determined in computeTone, so we have to clear it here before the next compute.
+                if (instrumentState.type == InstrumentType.soundfont) {
+                    instrumentState.currSoundfontPitchSampleIndicies.clear();
+                }
+
                 let toneCount: number = 0;
                 if ((note != null) && (!song.patternInstruments || (pattern!.instruments.indexOf(instrumentIndex) != -1))) {
                     const instrument: Instrument = channel.instruments[instrumentIndex];
@@ -10489,7 +10479,12 @@ export class Synth {
             let sampleInfo = Soundfont.loadedSoundfonts[instrument.soundfont].sampleInfo
             let currSample = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0])[0];
             baseExpression = Config.soundfontBaseExpression;
-            basePitch = sampleInfo[currSample].originalPitch;
+            if (sampleInfo[currSample])
+                basePitch = sampleInfo[currSample].originalPitch;
+
+            let sampleIndicies = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0]);
+            instrumentState.currSoundfontPitchSampleIndicies.set(tone.pitches[0], sampleIndicies);
+
         } else {
             throw new Error("Unknown instrument type in computeTone.");
         }
@@ -11842,15 +11837,16 @@ export class Synth {
             tone.initialNoteFilterInput2 = initialFilterInput2;
         }
     private static soundfontSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
-        console.log(instrumentState.soundfontPresetIndex);
-        
-        const sampleIndicies = Soundfont.getSamplesFromMidiPitch(instrumentState.soundfontIndex, instrumentState.soundfontPresetIndex, tone.pitches[0]);
+        const sampleIndicies = instrumentState.currSoundfontPitchSampleIndicies.get(tone.pitches[0]);
         const sf: Soundfont = Soundfont.loadedSoundfonts[instrumentState.soundfontIndex];
+        if (!sampleIndicies)
+            return;
+
         const currSample = sf.chipWaves[sampleIndicies[0]]; // TODO: allow for multiple samples to play at once
         let expression: number = +tone.expression;
         const expressionDelta: number = +tone.expressionDelta;
 
-        if (sampleIndicies.length < 0 || !currSample)
+        if (!currSample)
             return;
         
         const waveLength = currSample.length;

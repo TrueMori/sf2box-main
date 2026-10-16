@@ -90,7 +90,8 @@ export class Soundfont {
         "https://file.garden/ZxBw28OpLwxBlXVc/Bluegrass_Banjo.sf2",
         "https://file.garden/ZxBw28OpLwxBlXVc/electric%20piano/African_Percussion.sf2",
         "https://file.garden/ZxBw28OpLwxBlXVc/SRX_Acoustic_Bass.sf2",
-    ];
+        "https://dl.dropboxusercontent.com/scl/fi/r8d0onhkqhc5lrq1o5e8m/SC-55.sf2?rlkey=z9l0nyivx05cz9k5mzhie5clj&e=1&raw=1",
+    ]
 
     public static readonly loadedSoundfonts: Array<Soundfont> = [
     ];
@@ -108,11 +109,11 @@ export class Soundfont {
         return new Soundfont("Loading...", presets, [], [], [], [], "", false);
     }
 
-    //TODO: make the document not any, right now its a circular dependancy
-    public static async loadSoundfont(url: string, index: number, doc: any): Promise<Soundfont> {
+    //TODO: make the doc parameter not any, right now its a circular dependancy
+    public static async loadSoundfont(url: string, sfIndex: number, doc: any): Promise<Soundfont> {
         return fetch(url).then((response) => {
             if (!response.ok) {
-                return Promise.reject(new Error("Couldn't load sample"));
+                return Promise.reject(new Error("Couldn't load sf2."));
             }
             return response.arrayBuffer();
         }).then((arrayBuffer) => {
@@ -356,7 +357,7 @@ export class Soundfont {
 
             //Construct soundfont from data
             const success = new Soundfont(name, presets, chipWaves, rawChipWaves, rawRawChipWaves, sampleInfo, url, true);
-            this.loadedSoundfonts[index] = success;
+            this.loadedSoundfonts[sfIndex] = success;
             console.log(success);
             
             // TODO: Make this a bit more specific
@@ -417,7 +418,7 @@ export class Soundfont {
             genResult.push(gens[i]);
         }
         
-        return gens;
+        return genResult;
     }
 
     private static getInstrumentBagGenerators(bagIndex: number, bags: Bag[], gens: Generator[]): Generator[] {
@@ -476,7 +477,8 @@ export class Soundfont {
     public static getSamplesFromMidiPitch(soundfontIndex: number, presetIndex: number, pitch: number): number[] {
         const waves: number[] = [];
         const sf = Soundfont.loadedSoundfonts[soundfontIndex];
-        for (let pZone of sf.presets[presetIndex].presetZones) {
+        const preset = sf.presets[presetIndex];
+        for (let pZone of preset.presetZones) {
             for (let iZone of pZone.instrument.instrumentZones) {
                 if (pitch >= iZone.minPitch && pitch <= iZone.maxPitch) {
                     waves.push(iZone.sampleIndex);

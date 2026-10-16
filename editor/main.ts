@@ -125,6 +125,8 @@ if ("serviceWorker" in navigator) {
 for (let i = 0; i < Soundfont.soundfontURLS.length; i++) {
 	// Temporary soundfont before it actually loads to populate it.
 	Soundfont.loadedSoundfonts[i] = Soundfont.placeholderSoundfont();
+}
+for (let i = 0; i < Soundfont.soundfontURLS.length; i++) {
 	Soundfont.loadSoundfont(Soundfont.soundfontURLS[i], i, doc);
 }
 // TEMP //

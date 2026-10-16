@@ -2631,13 +2631,13 @@ export class SongEditor {
 
                 // Repopulate soundfont dropdown.
                 this._soundfontDropdown.replaceChildren();
-                for (let i = 0; i < Soundfont.loadedSoundfonts.length; i++) {
+                for (let i = 0; i < Soundfont.soundfontURLS.length; i++) {
                     this._soundfontDropdown.appendChild(option({ value: i }, Soundfont.loadedSoundfonts[i].name));
                 }
 
                 setSelectedValue(this._soundfontDropdown, instrument.soundfont)
                 
-                //Make sure the soundfont is loaded before selecing an invalid value.
+                //Make sure the soundfont is loaded before selecting an invalid value.
                 if (Soundfont.loadedSoundfonts[instrument.soundfont].success) {
                     setSelectedValue(this._soundfontPresetDropdown, instrument.soundfontPreset);
                 } else {
