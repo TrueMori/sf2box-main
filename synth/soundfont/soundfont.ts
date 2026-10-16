@@ -5,42 +5,47 @@
 // Important document for anyone trying to decipher what this is doing: https://www.synthfont.com/SFSPEC21.PDF
 // Soundfonts use the RIFF file structure.
 
-import { SongDocument } from "../../editor/SongDocument";
 import { Dictionary, performIntegral } from "../SynthConfig"
 
 const OPS: Dictionary<number> = {
     instrument: 41,
-    keyRange: 44,
+    keyRange: 43,
     sampleID: 53,
+}
+
+interface Instrument {
+    name: string,
+    minPitch: number,
+    maxPitch: number,
+    globalGens: Generator[],
+    instrumentZones: InstrumentZone[],
+}
+
+interface Preset {
+    name: string;
+    minPitch: number
+    maxPitch: number
+    globalGens: Generator[],
+    presetZones: PresetZone[];
 }
 
 interface InstrumentZone {
     minPitch: number,
     maxPitch: number,
-    generators: Generator[],
-    samples: SampleInfo[];
+    sampleIndex: number,
+    gens: Generator[],
 }
 
-interface SoundfontPreset {
-    name: string;
-    minPitch: number
-    maxPitch: number
-    generators: Generator[],
-    instrumentZones: Array<InstrumentZone>;
-}
-
-interface Sample {
-    name: string,
-    loopStart: number,
-    loopEnd: number,
-    sampleRate: number,
-    originalPitch: number,
-    pCorrection: number;
-    index: number,
+interface PresetZone {
+    minPitch: number,
+    maxPitch: number,
+    instrument: Instrument,
+    gens: Generator[],
 }
 
 interface SampleInfo {
     name: string,
+    index: number,
     sampleStart: number,
     sampleEnd: number,
     loopStart: number,
@@ -48,7 +53,6 @@ interface SampleInfo {
     sampleRate: number,
     originalPitch: number,
     pCorrection: number;
-    index: number,
 }
 
 interface Bag {
@@ -61,14 +65,15 @@ interface Generator {
     amt: number
 }
 
-interface PHDR {
-    name: string,
-    bagIndex: number, //index
-}
-
-interface INST {
+interface TypeInfo {
     name: string,
     bagIndex: number,
+}
+
+interface PHDR extends TypeInfo { //these are just for organization
+}
+
+interface INST extends TypeInfo {
 }
 
 export class Soundfont {
@@ -77,10 +82,12 @@ export class Soundfont {
     public readonly chipWaves: Float32Array[];
     public readonly rawChipWaves: Float32Array[];
     public readonly rawRawChipWaves: Float32Array[];
-    public readonly presets: Array<SoundfontPreset>;
+    public readonly presets: Preset[];
     public readonly success: Boolean;
+    public readonly sampleInfo: SampleInfo[];
 
     public static readonly soundfontURLS: Array<string> = [
+        "https://file.garden/ZxBw28OpLwxBlXVc/Bluegrass_Banjo.sf2",
         "https://file.garden/ZxBw28OpLwxBlXVc/electric%20piano/African_Percussion.sf2",
         "https://file.garden/ZxBw28OpLwxBlXVc/SRX_Acoustic_Bass.sf2",
     ];
@@ -90,18 +97,19 @@ export class Soundfont {
 
     //For loading purposes
     public static placeholderSoundfont(): Soundfont {
-        let presets: SoundfontPreset[] = [{
+        let presets: Preset[] = [{
             name: "Loading...",
-            instrumentZones: [],
+            presetZones: [],
+            globalGens: [],
             minPitch: 0,
             maxPitch: 0,
-            generators: [],
         }];
         
-        return new Soundfont("Loading...", presets, [], [], [], "", false);
+        return new Soundfont("Loading...", presets, [], [], [], [], "", false);
     }
 
-    public static async loadSoundfont(url: string, index: number, doc: SongDocument): Promise<Soundfont> {
+    //TODO: make the document not any, right now its a circular dependancy
+    public static async loadSoundfont(url: string, index: number, doc: any): Promise<Soundfont> {
         return fetch(url).then((response) => {
             if (!response.ok) {
                 return Promise.reject(new Error("Couldn't load sample"));
@@ -109,7 +117,7 @@ export class Soundfont {
             return response.arrayBuffer();
         }).then((arrayBuffer) => {
             let name: string = "";
-            let presets: SoundfontPreset[] = [];
+            let presets: Preset[] = [];
             let buffer = new Uint8Array(arrayBuffer);
             let rawSample: Float32Array = new Float32Array;
             let intSample: Float32Array = new Float32Array;
@@ -204,7 +212,7 @@ export class Soundfont {
                     case 'inst': // Instrument info
                         recordCount = Math.floor(size / 22)
                         currRecord = 0;
-                        while (currRecord < recordCount - 1) {
+                        while (currRecord < recordCount) {
                             const recLocation = (currRecord * 22) + postByte;
                            inst.push({
                                 name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
@@ -218,7 +226,7 @@ export class Soundfont {
                     case 'phdr': // Preset info
                         recordCount = Math.floor(size / 38); // Each preset is 38 bytes
                         currRecord = 0;
-                        while (currRecord < recordCount - 1) {
+                        while (currRecord < recordCount) {
                             const recLocation = (currRecord * 38) + postByte;
                             phdr.push({
                                 name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
@@ -232,7 +240,7 @@ export class Soundfont {
                     case 'shdr': // Sample info
                         recordCount = Math.floor(size / 46) // Each sample is 46 bytes
                         currRecord = 0;
-                        while (currRecord < recordCount - 1) {
+                        while (currRecord < recordCount) {
                             const recLocation = (currRecord * 46) + postByte;
                             sampleInfo.push({
                                 name: decoder.decode(buffer.subarray(recLocation, recLocation + 20)),
@@ -267,6 +275,11 @@ export class Soundfont {
                 }
                 
             }
+
+            const presetList = phdr.slice(); // Remove terminator entries
+            const instrumentList = inst.slice();
+            presetList.pop();
+            instrumentList.pop();
             
             //Construct samples from info
             for (let sample of sampleInfo) {
@@ -276,43 +289,75 @@ export class Soundfont {
             }
 
             //Construct instruments:
-            const instruments: InstrumentZone[] = [];
-            for (let instrument of inst) {
-                let minPitch = this.getKeyRange(instrument.bagIndex, ibag, igen)[0];
-                let maxPitch = this.getKeyRange(instrument.bagIndex, ibag, igen)[1];
-                const sampleIndicies: number[] = this.getGensOfType(instrument.bagIndex, ibag, igen, OPS.sampleID);
-                let samples: SampleInfo[] = [];
-                sampleIndicies.map((index) => samples.push(sampleInfo[index]));
+            const instruments: Instrument[] = [];
+            let index = 0;
+            for (let instrument of instrumentList) {
+                const bagRange: number[] = this.getBagRange(index, inst);
+                const generators: Generator[] = this.getGlobalInstrumentGenerators(ibag, igen);
+                const global: number = (generators.length > 0) ? 0 : 1;
+                const minPitch = this.getKeyRange(generators)[0];
+                const maxPitch = this.getKeyRange(generators)[1];
+                const instrumentZones: InstrumentZone[] = [];
+                for (let i = bagRange[0]; i < bagRange[1] - global; i++) { //account for terminator
+                    const zoneGens = this.getInstrumentBagGenerators(i, ibag, igen);
+                    const mnPitch = this.getKeyRange(zoneGens)[0];
+                    const mxPitch = this.getKeyRange(zoneGens)[1];
+                    const sampleIndex = this.getGensOfType(zoneGens, OPS.sampleID)[0];
+                    instrumentZones.push({
+                        minPitch: mnPitch,
+                        maxPitch: mxPitch,
+                        sampleIndex: sampleIndex,
+                        gens: zoneGens,
+                    });
+                }
                 instruments.push({
+                    name: instrument.name,
                     minPitch: minPitch,
                     maxPitch: maxPitch,
-                    generators: this.getGenerators(instrument.bagIndex, ibag, igen),
-                    samples: samples,
+                    globalGens: this.getGlobalInstrumentGenerators(ibag, igen),
+                    instrumentZones: instrumentZones,
                 });
+                index++;
             }
 
             //Construct presets:
-            for (let preset of phdr) {
-                console.log(preset.bagIndex)
-                console.log(pbag);
-                let minPitch = this.getKeyRange(preset.bagIndex, pbag, pgen)[0];
-                let maxPitch = this.getKeyRange(preset.bagIndex, pbag, pgen)[1];
-                const instrumentIndicies: number[] = this.getGensOfType(preset.bagIndex, pbag, pgen, OPS.instrument);
-                const instZones: InstrumentZone[] = [];
-                instrumentIndicies.map((index) => instZones.push(instruments[index]));
+            index = 0;
+            for (let preset of presetList) {
+                const bagRange: number[] = this.getBagRange(index, phdr);   
+                const generators: Generator[] = this.getGlobalPresetGenerators(pbag, pgen);
+                const global: number = (generators.length > 0) ? 0 : 1;
+                const minPitch = this.getKeyRange(generators)[0];
+                const maxPitch = this.getKeyRange(generators)[1];
+                const presetZones: PresetZone[] = [];
+                for (let i = bagRange[0]; i < bagRange[1] - global; i++) {
+                    console.log("generating presetZone");
+                    const zoneGens = this.getPresetBagGenerators(i, pbag, pgen);
+                    const mnPitch = this.getKeyRange(zoneGens)[0];  
+                    const mxPitch = this.getKeyRange(zoneGens)[1];
+                    const instIndex = this.getGensOfType(zoneGens, OPS.instrument)[0];
+                    const instrument = instruments[instIndex];
+                    presetZones.push({
+                        minPitch: mnPitch,
+                        maxPitch: mxPitch,
+                        instrument: instrument,
+                        gens: zoneGens,
+                    });
+                    console.log(presetZones);
+                }
                 presets.push({
                     name: preset.name,
                     minPitch: minPitch,
                     maxPitch: maxPitch,
-                    generators: this.getGenerators(preset.bagIndex, pbag, pgen),
-                    instrumentZones: instZones,
-                })
+                    globalGens: this.getGlobalInstrumentGenerators(ibag, igen),
+                    presetZones: presetZones,
+                });
+                index++;
             }
 
             //Construct soundfont from data
-            const success = new Soundfont(name, presets, chipWaves, rawChipWaves, rawRawChipWaves, url, true);
-            console.log(success)
+            const success = new Soundfont(name, presets, chipWaves, rawChipWaves, rawRawChipWaves, sampleInfo, url, true);
             this.loadedSoundfonts[index] = success;
+            console.log(success);
             
             // TODO: Make this a bit more specific
             doc.notifier.changed();
@@ -320,41 +365,96 @@ export class Soundfont {
         });
     }
 
-    private static getGenerators(bagIndex: number, bags: Bag[], gens: Generator[]): Generator[] {
-        if (bagIndex < 0 || bagIndex >= bags.length - 1) {
-            throw new Error(`Invalid bag index ${bagIndex}; expected 0–${bags.length - 2}`);
-        }
-
-        // Check for a global bag
-        let global = 0;
-        const tempGlobal = gens.slice();
-        const gStart = bags[0].genIndex;
-        const gEnd = bags[1].genIndex;
-        if (!tempGlobal.slice(gStart, gEnd).find((g) => g.op == OPS.instrument))
-            global = 1;
-
-        const start = bags[bagIndex + global].genIndex;
-        const end = bags[bagIndex + 1 + global].genIndex;
-        const tempGens = gens.slice();
-        return tempGens.slice(start, end);
+    private static getBagRange(instIndex: number, list: TypeInfo[]): number[] {
+        return [list[instIndex].bagIndex, list[instIndex + 1].bagIndex];
     }
 
-    private static getKeyRange(bagIndex: number, bags: Bag[], gens: Generator[]): number[] { //minimum and maximum respectively
-        let generators = this.getGenerators(bagIndex, bags, gens);
-        let keyRangeGen = generators.find((g) => g.op == OPS.keyRange)
-        if (keyRangeGen) {
-            let high = keyRangeGen.amt >>> 16;
-            let low = keyRangeGen.amt & 0xFFFF;
-            return [high, low];
+    private static getGlobalInstrumentGenerators(bags: Bag[], gens: Generator[]): Generator[] {
+        let generators: Generator[] = [];
+        let start = bags[0].genIndex;
+        let end = bags[1].genIndex;
+
+        for (let i = start; i < end; i++) {
+            generators.push(gens[i]);
+        }
+
+        if (generators.find((gen) => gen.op == OPS.sampleID)) {
+            return generators;
+        } else {
+            return [];
+        }
+    }
+
+    private static getGlobalPresetGenerators(bags: Bag[], gens: Generator[]): Generator[] {
+        let generators: Generator[] = [];
+        let start = bags[0].genIndex;
+        let end = bags[1].genIndex;
+
+        for (let i = start; i < end; i++) {
+            generators.push(gens[i]);
+        }
+
+        if (generators.find((gen) => gen.op == OPS.instrument)) {
+            return generators;
+        } else {
+            return [];
+        }
+    }
+
+    private static getPresetBagGenerators(bagIndex: number, bags: Bag[], gens: Generator[]): Generator[] {
+        // Check for a global bag
+        let global = 0; 
+        const gStart = bags[0].genIndex;
+        const gEnd = bags[1].genIndex;
+        if (!gens.slice(gStart, gEnd).find((g) => g.op == OPS.instrument))
+            global = 1;
+        
+        const genResult: Generator[] = [];
+        const start = bags[bagIndex + global].genIndex;
+        const end = bags[bagIndex + global + 1].genIndex;
+        
+        for (let i = start; i < end; i++) {
+            genResult.push(gens[i]);
+        }
+        
+        return gens;
+    }
+
+    private static getInstrumentBagGenerators(bagIndex: number, bags: Bag[], gens: Generator[]): Generator[] {
+        // Check for a global bag
+        let global = 0;
+        const tempGens = gens.slice();
+        const gStart = bags[0].genIndex;
+        const gEnd = bags[1].genIndex;
+        if (!tempGens.slice(gStart, gEnd).find((g) => g.op == OPS.sampleID))
+            global = 1;
+
+        const genResult: Generator[] = [];
+        const start = bags[bagIndex + global].genIndex;
+        const end = bags[bagIndex + global + 1].genIndex;
+
+        for (let i = start; i < end; i++) {
+            genResult.push(gens[i]);
+        }
+
+        return genResult;
+    }
+
+    private static getKeyRange(instGens: Generator[]): number[] { //minimum and maximum respectively
+        let keyRangeGen = this.getGensOfType(instGens, OPS.keyRange);
+        if (keyRangeGen.length > 0) {
+            let gen = keyRangeGen[0]; //will only be one in the array if it exists
+            let high = (gen >>> 8) & 0xFF;
+            let low = gen & 0xFF;
+            return [low, high];
         } else {
             return [0, 127]; //default to all pitches
         }
     }
 
-    private static getGensOfType(bagIndex: number, bags: Bag[], gens: Generator[], op: number): number[] { //returns array of amounts
-        let generators = this.getGenerators(bagIndex, bags, gens);
+    private static getGensOfType(instGens: Generator[], op: number): number[] { //returns array of amounts
         let result: number[] = [];
-        for (const g of generators) {
+        for (const g of instGens) {
             if (g.op == op) {
                 result.push(g.amt);
             }
@@ -362,12 +462,37 @@ export class Soundfont {
         return result;
     }
 
-    constructor(name: string, presets: SoundfontPreset[], chipWaves: Float32Array[], rawChipWaves: Float32Array[], rawRawChipWaves: Float32Array[], url: string, success: boolean) {
+    public static getAllPresetSamples(soundfontIndex: number, presetIndex: number): number[] {
+        const waves: number[] = [];
+        const sf = Soundfont.loadedSoundfonts[soundfontIndex];
+        for (let pZone of sf.presets[presetIndex].presetZones) {
+            for (let iZone of pZone.instrument.instrumentZones) {
+                waves.push(iZone.sampleIndex);
+            }
+        }
+        return waves;
+    }
+
+    public static getSamplesFromMidiPitch(soundfontIndex: number, presetIndex: number, pitch: number): number[] {
+        const waves: number[] = [];
+        const sf = Soundfont.loadedSoundfonts[soundfontIndex];
+        for (let pZone of sf.presets[presetIndex].presetZones) {
+            for (let iZone of pZone.instrument.instrumentZones) {
+                if (pitch >= iZone.minPitch && pitch <= iZone.maxPitch) {
+                    waves.push(iZone.sampleIndex);
+                }   
+            }
+        }
+        return waves;
+    }
+
+    constructor(name: string, presets: Preset[], chipWaves: Float32Array[], rawChipWaves: Float32Array[], rawRawChipWaves: Float32Array[], sampleInfo: SampleInfo[], url: string, success: boolean) {
         this.name = name;
         this.presets = presets;
         this.chipWaves = chipWaves;
         this.rawChipWaves = rawChipWaves;
         this.rawRawChipWaves = rawRawChipWaves;
+        this.sampleInfo = sampleInfo;
         this.url = url;
         this.success = true
     }

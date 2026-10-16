@@ -21,7 +21,7 @@ SOFTWARE.
 */
 
 export interface Dictionary<T> {
-    [K: string]: T;
+[K: string]: T;
 }
 
 // @TODO: Not ideal to make this writable like this.
@@ -353,7 +353,7 @@ export async function startLoadingSample(url: string, chipWaveIndex: number, pre
     // It would be easy to only instantiate `SongEditor` and company after
     // everything is loaded, but if dynamic sample loading without a reload
     // is deemed necessary, anything that involves chip waves has to be
-    // revisited so as to be able to work with a changing list of chip
+    // revisited so. as to be able to work with a changing list of chip
     // waves that may or may not be ready to be used.
     const sampleLoaderAudioContext = new AudioContext({ sampleRate: customSampleRate });
     let closedSampleLoaderAudioContext: boolean = false;

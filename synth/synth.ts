@@ -6,6 +6,7 @@ import { scaleElementsByFactor, inverseRealFourierTransform } from "./FFT";
 import { Deque } from "./Deque";
 import { events } from "../global/Events";
 import { FilterCoefficients, FrequencyResponse, DynamicBiquadFilter, warpInfinityToNyquist } from "./filtering";
+import { Soundfont } from "./soundfont/soundfont";
 
 declare global {
     interface Window {
@@ -7567,6 +7568,10 @@ class InstrumentState {
     public reverbShelfPrevInput2: number = 0.0;
     public reverbShelfPrevInput3: number = 0.0;
 
+    public soundfontWaves: Float32Array[] | null = null;
+    public soundfontIndex: number = 0;
+    public soundfontPresetIndex: number = 0;
+
     //public readonly envelopeComputer: EnvelopeComputer = new EnvelopeComputer(false);
 
     public readonly spectrumWave: SpectrumWaveState = new SpectrumWaveState();
@@ -8189,6 +8194,37 @@ class InstrumentState {
             this.unisonOffset = instrument.unisonOffset;
             this.unisonExpression = instrument.unisonExpression;
             this.unisonSign = instrument.unisonSign;
+        } else if (instrument.type == InstrumentType.soundfont) {
+            const waveIndicies: number[] = Soundfont.getAllPresetSamples(instrument.soundfont, instrument.soundfontPreset);
+            const chipWaves: Float32Array[] = [];
+            const rawChipWaves: Float32Array[] = [];
+            waveIndicies.map((i) => {
+                chipWaves[i] = Soundfont.loadedSoundfonts[instrument.soundfont].chipWaves[i];
+                rawChipWaves[i] = Soundfont.loadedSoundfonts[instrument.soundfont].rawChipWaves[i];
+            });
+            if (this.aliases) {
+                for (let chipWave of chipWaves) {
+                    this.soundfontWaves?.push(chipWave);
+                }
+            } else {
+                for (let rawChipWave of rawChipWaves) {
+                    this.soundfontWaves?.push(rawChipWave);
+                }
+            }
+            this.soundfontIndex = instrument.soundfont;
+            this.soundfontPresetIndex = instrument.soundfontPreset;
+                this.isUsingAdvancedLoopControls = instrument.isUsingAdvancedLoopControls;
+                this.chipWaveLoopStart = instrument.chipWaveLoopStart;
+                this.chipWaveLoopEnd = instrument.chipWaveLoopEnd;
+                this.chipWaveLoopMode = instrument.chipWaveLoopMode;
+                this.chipWavePlayBackwards = instrument.chipWavePlayBackwards;
+                this.chipWaveStartOffset = instrument.chipWaveStartOffset;
+
+                this.unisonVoices = instrument.unisonVoices;
+                this.unisonSpread = instrument.unisonSpread;
+                this.unisonOffset = instrument.unisonOffset;
+                this.unisonExpression = instrument.unisonExpression;
+                this.unisonSign = instrument.unisonSign;
         } else if (instrument.type == InstrumentType.drumset) {
             for (let i: number = 0; i < Config.drumCount; i++) {
                 this.drumsetSpectrumWaves[i].getCustomWave(instrument.drumsetSpectrumWaves[i], InstrumentState._drumsetIndexToSpectrumOctave(i));
@@ -10450,7 +10486,10 @@ export class Synth {
             pitchDamping = 1.0;
             basePitch = 0;
         } else if (instrument.type == InstrumentType.soundfont) {
+            let sampleInfo = Soundfont.loadedSoundfonts[instrument.soundfont].sampleInfo
+            let currSample = Soundfont.getSamplesFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0])[0];
             baseExpression = Config.soundfontBaseExpression;
+            basePitch = sampleInfo[currSample].originalPitch;
         } else {
             throw new Error("Unknown instrument type in computeTone.");
         }
@@ -11803,7 +11842,35 @@ export class Synth {
             tone.initialNoteFilterInput2 = initialFilterInput2;
         }
     private static soundfontSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
-        //Nothing to synthesize yet.
+        console.log(instrumentState.soundfontPresetIndex);
+        
+        const sampleIndicies = Soundfont.getSamplesFromMidiPitch(instrumentState.soundfontIndex, instrumentState.soundfontPresetIndex, tone.pitches[0]);
+        const sf: Soundfont = Soundfont.loadedSoundfonts[instrumentState.soundfontIndex];
+        const currSample = sf.chipWaves[sampleIndicies[0]]; // TODO: allow for multiple samples to play at once
+        let expression: number = +tone.expression;
+        const expressionDelta: number = +tone.expressionDelta;
+
+        if (sampleIndicies.length < 0 || !currSample)
+            return;
+        
+        const waveLength = currSample.length;
+
+        let phaseDelta: number = tone.phaseDeltas[0] * waveLength / 100;
+        const phaseDeltaScale: number = +tone.phaseDeltaScales[0];
+        let phase: number = tone.phases[0] * waveLength;
+
+        const data: Float32Array = synth.tempMonoInstrumentSampleBuffer!;
+        const stopIndex: number = bufferIndex + roundedSamplesPerTick;
+        for (let sampleIndex: number = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
+            phase += phaseDelta; // Advance phase.
+            phaseDelta *= phaseDeltaScale; // Advance phaseDelta.
+            const output: number = currSample[(phase) | 0] * expression;
+            expression += expressionDelta;
+            data[sampleIndex] += output;
+        }
+
+        tone.phases[0] = phase / waveLength;
+        tone.phaseDeltas[0] = phaseDelta / waveLength;
     }
 
     private static chipSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
@@ -11819,7 +11886,7 @@ export class Synth {
         let phaseDeltaA: number = tone.phaseDeltas[0] * waveLength;
         let phaseDeltaB: number = tone.phaseDeltas[1] * waveLength;
         const phaseDeltaScaleA: number = +tone.phaseDeltaScales[0];
-        const phaseDeltaScaleB: number = +tone.phaseDeltaScales[1];
+        const phaseDeltaScaleB: number = +tone.phaseDeltaScales[1]; 
         let expression: number = +tone.expression;
         const expressionDelta: number = +tone.expressionDelta;
         let phaseA: number = (tone.phases[0] % 1) * waveLength;
