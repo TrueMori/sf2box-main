@@ -3468,7 +3468,11 @@ export class Song {
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
                 } else if (instrument.type == InstrumentType.soundfont) {
-                    buffer.push(SongTagCode.soundfont, base64IntToCharCode[instrument.soundfont], base64IntToCharCode[instrument.soundfontPreset]);
+                    //soundfonts can have a lot of presets so we need like a lot more numbers. two should do; 64^2 is, like, a big number.
+                    const bigChar = Math.floor(instrument.soundfontPreset / 64);
+                    const littleChar = instrument.soundfontPreset % 64;
+                    console.log(bigChar, littleChar);
+                    buffer.push(SongTagCode.soundfont, base64IntToCharCode[instrument.soundfont], base64IntToCharCode[bigChar], base64IntToCharCode[littleChar]);
                 } else {
                     throw new Error("Unknown instrument type.");
                 }
@@ -4510,7 +4514,10 @@ export class Song {
             case SongTagCode.soundfont: {
                 const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
                 instrument.soundfont = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
-                instrument.soundfontPreset = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                const bigChar = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                const littleChar = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                console.log(bigChar, littleChar);
+                instrument.soundfontPreset = bigChar * 64 + littleChar;
             } break;
             case SongTagCode.stringSustain: {
                 const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];

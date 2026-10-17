@@ -102,7 +102,9 @@ export class Soundfont {
     public static readonly soundfontURLS: Array<string> = [
         "https://file.garden/ZxBw28OpLwxBlXVc/Bluegrass_Banjo.sf2",
         "https://file.garden/ZxBw28OpLwxBlXVc/SRX_Acoustic_Bass.sf2",
-        "https://dl.dropboxusercontent.com/scl/fi/5dgonx0uhlasjwxlkgy00/CTinstruments.sf2?rlkey=4fhyvithjjxjyliy7lrilmrym&st=450mbyf8&dl=0",    ];
+        "https://dl.dropboxusercontent.com/scl/fi/5dgonx0uhlasjwxlkgy00/CTinstruments.sf2?rlkey=4fhyvithjjxjyliy7lrilmrym&st=450mbyf8&dl=0",
+        "https://dl.dropboxusercontent.com/scl/fi/9cbprbhg6r64ltdt0cwwl/SC-55.sf2?rlkey=2wx9joy8eoqj1l8zamhld3n7a&st=yydmwjj2&dl=0",
+    ];
 
     public static readonly loadedSoundfonts: Array<Soundfont> = [
     ];
