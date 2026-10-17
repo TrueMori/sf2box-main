@@ -10492,6 +10492,7 @@ export class Synth {
 
             instrumentState.currSoundfontPitchSampleIndicies.set(tone.pitches[0], sampleIndicies);
             instrumentState.currSoundfontPitchSampleMode.set(tone.pitches[0], loopMode);
+            console.log(instrumentState.currSoundfontPitchSampleMode);
 
         } else {
             throw new Error("Unknown instrument type in computeTone.");
@@ -11865,7 +11866,6 @@ export class Synth {
         const loopEnd = sInfo.loopEnd;
         const loopRange = loopEnd - loopStart;
         const crossFadeLength = Math.min(Math.round(sInfo.sampleRate * 0.005), Math.floor(loopRange / 2));
-        console.log(loopMode);
         const canLoop = (loopMode == 1 || loopMode == 3) ? true : false;
         const crossFadeStart = loopEnd - crossFadeLength;
         const applyFilters: Function = Synth.applyFilters;
