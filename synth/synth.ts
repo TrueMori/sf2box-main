@@ -10488,12 +10488,10 @@ export class Synth {
             const gInstrumentGens = Soundfont.getGeneratorsOfLevelFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0], 2);
             const lInstrumentGens = Soundfont.getGeneratorsOfLevelFromMidiPitch(instrument.soundfont, instrument.soundfontPreset, tone.pitches[0], 3);
 
-            const loopMode = lInstrumentGens.find((gen) => gen.op == OPS.sampleMode)?.amt ?? gInstrumentGens.find((gen) => gen.op = OPS.sampleMode)?.amt ?? 0;
+            const loopMode = lInstrumentGens.find((gen) => gen.op == OPS.sampleMode)?.amt ?? gInstrumentGens.find((gen) => gen.op == OPS.sampleMode)?.amt ?? 0;
 
             instrumentState.currSoundfontPitchSampleIndicies.set(tone.pitches[0], sampleIndicies);
             instrumentState.currSoundfontPitchSampleMode.set(tone.pitches[0], loopMode);
-            console.log(instrumentState.currSoundfontPitchSampleMode);
-
         } else {
             throw new Error("Unknown instrument type in computeTone.");
         }
