@@ -11863,9 +11863,7 @@ export class Synth {
         const loopStart = sInfo.loopStart;
         const loopEnd = sInfo.loopEnd;
         const loopRange = loopEnd - loopStart;
-        const crossFadeLength = Math.min(Math.round(sInfo.sampleRate * 0.005), Math.floor(loopRange / 2));
         const canLoop = (loopMode == 1 || loopMode == 3) ? true : false;
-        const crossFadeStart = loopEnd - crossFadeLength;
         const applyFilters: Function = Synth.applyFilters;
         let expression: number = +tone.expression;
         const expressionDelta: number = +tone.expressionDelta;
@@ -11875,7 +11873,7 @@ export class Synth {
         const filterCount: number = tone.noteFilterCount | 0;
         const volumeScale = instrumentState.volumeScale;
 
-        //helper function so we dont gotta write it out a bajillion times, mostly due to crossfading
+        //originally here because i attepted crossfading, but... nice to have, i guess!
         const readSample = (position: number): number => { 
             const index = Math.floor(position);
             const fraction = position - index;
@@ -11898,16 +11896,8 @@ export class Synth {
             if (canLoop && phase >= loopEnd) {
                 phase = loopStart + ((phase - loopStart) % loopRange);
             }
-
-            if (canLoop && phase >= crossFadeStart && phase < loopEnd) { //do crossfade
-                const t = (phase - crossFadeStart) / crossFadeLength;
-                const outgoing = readSample(phase);
-                const incomingPosition = loopStart + (phase - crossFadeStart);
-                const incoming = readSample(incomingPosition);
-                inputSample = outgoing * (1 - t) + incoming * t;
-            } else if (phase < waveLength) {
-                inputSample = readSample(phase);
-            }
+            
+            inputSample = readSample(phase);
 
             const sample = applyFilters(inputSample * volumeScale, initialFilterInput1, initialFilterInput2, filterCount, filters);
             const output: number = sample * expression;
