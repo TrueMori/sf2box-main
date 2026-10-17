@@ -4875,3 +4875,28 @@ export class ChangeSetEnvelopeType extends Change {
         }
     }
 }
+
+export class ChangeSoundfont extends Change {
+    constructor(doc: SongDocument, newValue: number) {
+        super();
+        const instrument: Instrument = doc.song.channels[doc.channel].instruments[doc.getCurrentInstrument()];
+        if (instrument.soundfont != newValue) {
+            instrument.soundfont = newValue;
+            instrument.soundfontPreset = 0;
+            doc.notifier.changed();
+            this._didSomething();
+        }
+    }
+}
+
+export class ChangeSoundfontPreset extends Change {
+    constructor(doc: SongDocument, newValue: number) {
+        super();
+        const instrument: Instrument = doc.song.channels[doc.channel].instruments[doc.getCurrentInstrument()];
+        if (instrument.soundfontPreset != newValue) {
+            instrument.soundfontPreset = newValue;
+            doc.notifier.changed();
+            this._didSomething();
+        }
+    }
+}
